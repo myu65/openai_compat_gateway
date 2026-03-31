@@ -22,6 +22,7 @@ class BridgeExecution(BaseModel):
     builtin_tool_type: str
     execution_mode: str = "gateway_builtin_bridge"
     args: dict[str, Any] = Field(default_factory=dict)
+    display_tool_name: str | None = None
 
 
 class NormalizedResponse(BaseModel):

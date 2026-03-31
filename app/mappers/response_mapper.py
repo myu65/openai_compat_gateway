@@ -137,6 +137,6 @@ def normalize_final_response(resp, bridge_executions: list[BridgeExecution] | No
         file_search_results=file_search_results,
         code_interpreter_outputs=code_interpreter_outputs,
         usage=_normalize_usage(getattr(resp, "usage", None)),
-        legacy_steps=to_legacy_log_steps(resp),
+        legacy_steps=to_legacy_log_steps(resp, bridge_executions=bridge_executions),
         bridge_executions=bridge_executions or [],
     )

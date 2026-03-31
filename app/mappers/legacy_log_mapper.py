@@ -3,6 +3,16 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from app.schemas.internal import BridgeExecution
+
+
+def _bridge_name_map(bridge_executions: list[BridgeExecution] | None) -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    for bridge in bridge_executions or []:
+        if bridge.display_tool_name and bridge.builtin_tool_type not in mapping:
+            mapping[bridge.builtin_tool_type] = bridge.display_tool_name
+    return mapping
+
 
 def _collect_message_text(item: Any) -> str:
     parts: list[str] = []
@@ -32,9 +42,10 @@ def _collect_url_citations(item: Any) -> list[dict[str, Any]]:
     return citations
 
 
-def to_legacy_log_steps(resp) -> list[dict[str, Any]]:
+def to_legacy_log_steps(resp, bridge_executions: list[BridgeExecution] | None = None) -> list[dict[str, Any]]:
     steps: list[dict[str, Any]] = []
     pending_tool_calls: list[dict[str, Any]] = []
+    bridge_names = _bridge_name_map(bridge_executions)
 
     for item in getattr(resp, "output", []) or []:
         item_type = getattr(item, "type", None)
@@ -61,6 +72,8 @@ def to_legacy_log_steps(resp) -> list[dict[str, Any]]:
 
         elif item_type == "web_search_call":
             action = getattr(item, "action", None)
+            tool_name = bridge_names.get("web_search", "openai_builtin.web_search")
+            call_id = getattr(item, "id", "builtin_web_search")
             payload = {
                 "query": getattr(action, "query", None) if action else None,
                 "sources": [
@@ -80,10 +93,10 @@ def to_legacy_log_steps(resp) -> list[dict[str, Any]]:
                     "content": "",
                     "tool_calls": [
                         {
-                            "id": getattr(item, "id", "builtin_web_search"),
+                            "id": call_id,
                             "type": "function",
                             "function": {
-                                "name": "openai_builtin.web_search",
+                                "name": tool_name,
                                 "arguments": json.dumps({"query": payload["query"]}, ensure_ascii=False),
                             },
                         }
@@ -93,13 +106,14 @@ def to_legacy_log_steps(resp) -> list[dict[str, Any]]:
             steps.append(
                 {
                     "role": "tool",
-                    "tool_call_id": getattr(item, "id", "builtin_web_search"),
-                    "name": "openai_builtin.web_search",
+                    "tool_call_id": call_id,
+                    "name": tool_name,
                     "content": json.dumps(payload, ensure_ascii=False),
                 }
             )
 
         elif item_type == "file_search_call":
+            tool_name = bridge_names.get("file_search", "openai_builtin.file_search")
             results = [
                 {
                     "file_id": getattr(r, "file_id", None),
@@ -118,7 +132,7 @@ def to_legacy_log_steps(resp) -> list[dict[str, Any]]:
                         {
                             "id": call_id,
                             "type": "function",
-                            "function": {"name": "openai_builtin.file_search", "arguments": "{}"},
+                            "function": {"name": tool_name, "arguments": "{}"},
                         }
                     ],
                 }
@@ -127,7 +141,7 @@ def to_legacy_log_steps(resp) -> list[dict[str, Any]]:
                 {
                     "role": "tool",
                     "tool_call_id": call_id,
-                    "name": "openai_builtin.file_search",
+                    "name": tool_name,
                     "content": json.dumps({"results": results}, ensure_ascii=False),
                 }
             )

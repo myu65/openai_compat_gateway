@@ -3,18 +3,37 @@ from __future__ import annotations
 import json
 import time
 import uuid
+from types import SimpleNamespace
 from typing import Any, Iterable
+
+from app.mappers.legacy_log_mapper import to_legacy_log_steps
+from app.schemas.internal import BridgeExecution
 
 
 def _sse_line(data: dict[str, Any]) -> str:
     return f"data: {json.dumps(data, ensure_ascii=False, default=str)}\\n\\n"
 
 
-def map_stream_events(openai_stream: Iterable[Any], model: str):
+def _collect_message_text(item: Any) -> str:
+    parts: list[str] = []
+    for content_item in getattr(item, "content", []) or []:
+        if getattr(content_item, "type", None) in ("output_text", "text"):
+            text = getattr(content_item, "text", None)
+            if text:
+                parts.append(text)
+    return "".join(parts).strip()
+
+
+def map_stream_events(
+    openai_stream: Iterable[Any],
+    model: str,
+    bridge_executions: list[BridgeExecution] | None = None,
+):
     stream_id = f"chatcmpl-{uuid.uuid4().hex}"
     created = int(time.time())
     citations: list[dict[str, Any]] = []
     builtin_tool_events: list[dict[str, Any]] = []
+    completed_items: list[Any] = []
     sent_role = False
 
     for event in openai_stream:
@@ -77,18 +96,57 @@ def map_stream_events(openai_stream: Iterable[Any], model: str):
         elif etype == "response.output_item.done":
             item = getattr(event, "item", None)
             item_type = getattr(item, "type", None) if item else None
+            if item is not None:
+                completed_items.append(item)
             if item_type == "web_search_call":
                 action = getattr(item, "action", None)
-                builtin_tool_events.append({"type": "web_search", "status": getattr(item, "status", "completed")})
+                builtin_tool_events.append(
+                    {
+                        "id": getattr(item, "id", "web_search"),
+                        "type": "web_search",
+                        "status": getattr(item, "status", "completed"),
+                        "payload": {
+                            "query": getattr(action, "query", None) if action else None,
+                            "sources_count": len(getattr(action, "sources", None) or []) if action else 0,
+                        },
+                    }
+                )
                 if action and getattr(action, "sources", None):
                     for s in action.sources:
                         citations.append({"url": getattr(s, "url", None), "title": getattr(s, "title", None)})
             elif item_type == "file_search_call":
-                builtin_tool_events.append({"type": "file_search", "status": getattr(item, "status", "completed")})
+                builtin_tool_events.append(
+                    {
+                        "id": getattr(item, "id", "file_search"),
+                        "type": "file_search",
+                        "status": getattr(item, "status", "completed"),
+                    }
+                )
             elif item_type == "code_interpreter_call":
-                builtin_tool_events.append({"type": "code_interpreter", "status": getattr(item, "status", "completed")})
+                builtin_tool_events.append(
+                    {
+                        "id": getattr(item, "id", "code_interpreter"),
+                        "type": "code_interpreter",
+                        "status": getattr(item, "status", "completed"),
+                    }
+                )
+            elif item_type == "message":
+                for content_item in getattr(item, "content", []) or []:
+                    for annotation in getattr(content_item, "annotations", []) or []:
+                        if getattr(annotation, "type", None) != "url_citation":
+                            continue
+                        citations.append(
+                            {
+                                "url": getattr(annotation, "url", None),
+                                "title": getattr(annotation, "title", None),
+                            }
+                        )
 
         elif etype == "response.completed":
+            legacy_steps = to_legacy_log_steps(
+                SimpleNamespace(output=completed_items),
+                bridge_executions=bridge_executions,
+            )
             yield _sse_line(
                 {
                     "id": stream_id,
@@ -96,7 +154,12 @@ def map_stream_events(openai_stream: Iterable[Any], model: str):
                     "created": created,
                     "model": model,
                     "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
-                    "x_openai": {"citations": citations, "builtin_tool_events": builtin_tool_events},
+                    "x_openai": {
+                        "citations": citations,
+                        "builtin_tool_events": builtin_tool_events,
+                        "legacy_steps": legacy_steps,
+                        "assistant_text": _collect_message_text(completed_items[-1]) if completed_items else "",
+                    },
                 }
             )
             yield "data: [DONE]\\n\\n"

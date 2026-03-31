@@ -4,6 +4,7 @@ import unittest
 from types import SimpleNamespace
 
 from app.mappers.response_mapper import _normalize_usage, normalize_final_response
+from app.schemas.internal import BridgeExecution
 
 
 class NormalizeFinalResponseTests(unittest.TestCase):
@@ -65,6 +66,38 @@ class NormalizeFinalResponseTests(unittest.TestCase):
             normalized.usage,
             {"input_tokens": 3, "output_tokens": 7, "total_tokens": 10},
         )
+        self.assertEqual(normalized.legacy_steps[0]["tool_calls"][0]["function"]["name"], "openai_builtin.web_search")
+
+    def test_bridged_web_search_uses_legacy_tool_name_in_steps(self) -> None:
+        resp = SimpleNamespace(
+            output=[
+                SimpleNamespace(
+                    type="web_search_call",
+                    id="ws_123",
+                    status="completed",
+                    action=SimpleNamespace(query="weather", sources=[]),
+                ),
+                SimpleNamespace(
+                    type="message",
+                    content=[SimpleNamespace(type="output_text", text="answer", annotations=[])],
+                ),
+            ],
+            usage=None,
+        )
+
+        normalized = normalize_final_response(
+            resp,
+            bridge_executions=[
+                BridgeExecution(
+                    requested_tool_name="search_web",
+                    display_tool_name="search_web",
+                    builtin_tool_type="web_search",
+                )
+            ],
+        )
+
+        self.assertEqual(normalized.legacy_steps[0]["tool_calls"][0]["function"]["name"], "search_web")
+        self.assertEqual(normalized.legacy_steps[1]["name"], "search_web")
 
 
 if __name__ == "__main__":

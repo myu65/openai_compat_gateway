@@ -33,6 +33,30 @@ class ChatService:
         bridge_requests: list[BridgeExecution] = []
         bridge_messages: list[dict[str, Any]] = []
 
+        for tool in custom_tools:
+            spec = find_bridge_for_tool_name(tool.function.name)
+            if not spec:
+                continue
+            bridge_requests.append(
+                BridgeExecution(
+                    requested_tool_name=tool.function.name,
+                    display_tool_name=tool.function.name,
+                    builtin_tool_type=spec.builtin_tool_type,
+                )
+            )
+            if spec.builtin_tool_type == "web_search":
+                if builtin_cfg is None:
+                    from app.schemas.compat import BuiltinToolsConfig
+                    builtin_cfg = BuiltinToolsConfig(web_search=True)
+                else:
+                    builtin_cfg.web_search = True
+            elif spec.builtin_tool_type == "file_search":
+                if builtin_cfg is None:
+                    from app.schemas.compat import BuiltinToolsConfig
+                    builtin_cfg = BuiltinToolsConfig(file_search={})
+                else:
+                    builtin_cfg.file_search = builtin_cfg.file_search or {}
+
         # Bridge selected custom tools to built-in tools based on prior tool results already in messages.
         for message in req.messages:
             if message.role == "tool" and message.name:
@@ -49,6 +73,7 @@ class ChatService:
                 bridge_requests.append(
                     BridgeExecution(
                         requested_tool_name=message.name,
+                        display_tool_name=message.name,
                         builtin_tool_type=spec.builtin_tool_type,
                         args={"query": query} if query else {},
                     )
@@ -90,9 +115,10 @@ class ChatService:
 
     def run_nonstream(self, req):
         model, input_payload, tools, include, bridge_requests = self._prepare_request(req)
+        rolling_input = list(input_payload)
         resp = self.adapter.create_response(
             model=model,
-            input_payload=input_payload,
+            input_payload=rolling_input,
             tools=tools,
             tool_choice=req.tool_choice,
             temperature=req.temperature,
@@ -108,12 +134,21 @@ class ChatService:
 
             followup_input: list[dict[str, Any]] = []
             for fc in function_calls:
+                followup_input.append(
+                    {
+                        "type": "function_call",
+                        "call_id": fc.call_id,
+                        "name": fc.name,
+                        "arguments": fc.arguments,
+                    }
+                )
                 result = self.tool_executor.execute(fc.name, fc.arguments)
                 followup_input.append({"type": "function_call_output", "call_id": fc.call_id, "output": result})
 
+            rolling_input.extend(followup_input)
             resp = self.adapter.create_response(
                 model=model,
-                input_payload=followup_input,
+                input_payload=rolling_input,
                 tools=tools,
                 tool_choice=req.tool_choice,
                 temperature=req.temperature,
@@ -126,7 +161,7 @@ class ChatService:
         return normalized
 
     def run_stream(self, req):
-        model, input_payload, tools, include, _bridge_requests = self._prepare_request(req)
+        model, input_payload, tools, include, bridge_requests = self._prepare_request(req)
         openai_stream = self.adapter.create_response(
             model=model,
             input_payload=input_payload,
@@ -136,4 +171,4 @@ class ChatService:
             include=include,
             stream=True,
         )
-        return map_stream_events(openai_stream, model)
+        return map_stream_events(openai_stream, model, bridge_executions=bridge_requests)

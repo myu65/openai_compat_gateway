@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from types import SimpleNamespace
 
-from app.schemas.compat import BuiltinToolsConfig, ChatCompletionsRequest, ChatMessage
+from app.schemas.compat import BuiltinToolsConfig, ChatCompletionsRequest, ChatMessage, FunctionSpec, ToolSpec
 from app.services.chat_service import ChatService
 
 
@@ -21,13 +21,23 @@ class DummyToolExecutor:
         return False
 
 
+class ExecutingToolExecutor:
+    def has(self, name: str) -> bool:
+        return name == "echo_tool"
+
+    def execute(self, name: str, arguments_json: str) -> str:
+        self.last_call = (name, arguments_json)
+        return '{"echo":"ok"}'
+
+
 class CapturingAdapter:
-    def __init__(self) -> None:
+    def __init__(self, responses=None) -> None:
         self.calls = []
+        self.responses = list(responses or [SimpleNamespace(output=[], usage={"total_tokens": 1})])
 
     def create_response(self, **kwargs):
         self.calls.append(kwargs)
-        return SimpleNamespace(output=[], usage={"total_tokens": 1})
+        return self.responses.pop(0)
 
 
 class ChatServiceTests(unittest.TestCase):
@@ -98,6 +108,97 @@ class ChatServiceTests(unittest.TestCase):
             ],
         )
         self.assertTrue(adapter.calls[0]["stream"])
+
+    def test_bridge_tool_definitions_enable_builtin_web_search(self) -> None:
+        adapter = CapturingAdapter()
+        service = ChatService(
+            adapter,
+            DummyToolExecutor(),
+            DummyAuditLogger(),
+            default_model="gpt-5.4-mini",
+        )
+
+        req = ChatCompletionsRequest(
+            messages=[ChatMessage(role="user", content="search for tokyo weather")],
+            tools=[
+                ToolSpec(
+                    type="function",
+                    function=FunctionSpec(
+                        name="search_web",
+                        description="Search the web",
+                        parameters={"type": "object", "properties": {"query": {"type": "string"}}},
+                    ),
+                )
+            ],
+        )
+
+        normalized = service.run_nonstream(req)
+
+        self.assertEqual(adapter.calls[0]["tools"], [{"type": "web_search"}])
+        self.assertEqual(normalized.bridge_executions[0].display_tool_name, "search_web")
+
+    def test_nonstream_custom_function_loop_replays_in_request_state(self) -> None:
+        adapter = CapturingAdapter(
+            responses=[
+                SimpleNamespace(
+                    output=[
+                        SimpleNamespace(
+                            type="function_call",
+                            call_id="call_123",
+                            name="echo_tool",
+                            arguments='{"text":"hello"}',
+                        )
+                    ],
+                    usage={"total_tokens": 1},
+                ),
+                SimpleNamespace(
+                    output=[
+                        SimpleNamespace(
+                            type="message",
+                            content=[SimpleNamespace(type="output_text", text="done", annotations=[])],
+                        )
+                    ],
+                    usage={"total_tokens": 2},
+                ),
+            ]
+        )
+        service = ChatService(
+            adapter,
+            ExecutingToolExecutor(),
+            DummyAuditLogger(),
+            default_model="gpt-5.4-mini",
+        )
+
+        req = ChatCompletionsRequest(
+            messages=[ChatMessage(role="user", content="hello")],
+            tools=[
+                ToolSpec(
+                    type="function",
+                    function=FunctionSpec(
+                        name="echo_tool",
+                        description="Echo text",
+                        parameters={"type": "object", "properties": {"text": {"type": "string"}}},
+                    ),
+                )
+            ],
+        )
+
+        normalized = service.run_nonstream(req)
+
+        self.assertEqual(normalized.assistant_text, "done")
+        self.assertEqual(
+            adapter.calls[1]["input_payload"],
+            [
+                {"role": "user", "content": "hello"},
+                {
+                    "type": "function_call",
+                    "call_id": "call_123",
+                    "name": "echo_tool",
+                    "arguments": '{"text":"hello"}',
+                },
+                {"type": "function_call_output", "call_id": "call_123", "output": '{"echo":"ok"}'},
+            ],
+        )
 
 
 if __name__ == "__main__":
