@@ -12,6 +12,13 @@ def _parse_env_value(raw: str) -> str:
     return value
 
 
+def _parse_env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _load_dotenv(dotenv_path: Path) -> None:
     if not dotenv_path.exists():
         return
@@ -40,6 +47,7 @@ _load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 class Settings:
     openai_api_key: str | None = os.getenv("OPENAI_API_KEY")
     openai_model_default: str = os.getenv("OPENAI_MODEL_DEFAULT", "gpt-5.4-mini")
+    openai_include_web_search_results: bool = _parse_env_bool("OPENAI_INCLUDE_WEB_SEARCH_RESULTS", default=False)
 
 
 settings = Settings()

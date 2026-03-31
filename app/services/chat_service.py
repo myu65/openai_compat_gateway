@@ -12,11 +12,19 @@ from app.tools.registry import extract_bridge_query, find_bridge_for_tool_name
 
 
 class ChatService:
-    def __init__(self, adapter, tool_executor, audit_logger, default_model: str):
+    def __init__(
+        self,
+        adapter,
+        tool_executor,
+        audit_logger,
+        default_model: str,
+        include_web_search_results: bool = False,
+    ):
         self.adapter = adapter
         self.tool_executor = tool_executor
         self.audit_logger = audit_logger
         self.default_model = default_model
+        self.include_web_search_results = include_web_search_results
 
     def _prepare_request(self, req):
         model = req.model or self.default_model
@@ -73,7 +81,10 @@ class ChatService:
         input_payload.extend(bridge_messages)
         custom_responses_tools = to_responses_custom_tools(filtered_custom_tools)
         merged_tools = merge_builtin_tools(custom_responses_tools, builtin_cfg)
-        include = build_include_list(builtin_cfg)
+        include = build_include_list(
+            builtin_cfg,
+            include_web_search_results=self.include_web_search_results,
+        )
 
         return model, input_payload, merged_tools, include, bridge_requests
 

@@ -16,6 +16,7 @@ Implemented scope:
 
 - `OPENAI_API_KEY` - required
 - `OPENAI_MODEL_DEFAULT` - optional, default model alias fallback
+- `OPENAI_INCLUDE_WEB_SEARCH_RESULTS` - optional, defaults to `false`; enable only if your org has `include=web_search_call.results`
 - `.env` is loaded automatically on startup if present
 
 ## Install
@@ -32,6 +33,12 @@ uv sync
 
 ```bash
 uv run uvicorn app.main:app --reload --port 8000
+```
+
+## Test
+
+```bash
+uv run pytest
 ```
 
 ## Example request

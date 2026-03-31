@@ -32,7 +32,13 @@ def get_service() -> ChatService:
         adapter = OpenAIResponsesAdapter(api_key=settings.openai_api_key)
         executor = ToolExecutor(_sample_tool_registry())
         audit = AuditLogger()
-        _service = ChatService(adapter, executor, audit, default_model=settings.openai_model_default)
+        _service = ChatService(
+            adapter,
+            executor,
+            audit,
+            default_model=settings.openai_model_default,
+            include_web_search_results=settings.openai_include_web_search_results,
+        )
     return _service
 
 

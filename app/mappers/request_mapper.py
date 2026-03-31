@@ -48,11 +48,16 @@ def merge_builtin_tools(tools: list[dict[str, Any]], builtin_cfg: BuiltinToolsCo
     return merged
 
 
-def build_include_list(builtin_cfg: BuiltinToolsConfig | None) -> list[str]:
+def build_include_list(
+    builtin_cfg: BuiltinToolsConfig | None,
+    *,
+    include_web_search_results: bool = False,
+) -> list[str]:
     include: list[str] = []
     if builtin_cfg and builtin_cfg.web_search:
         include.append("web_search_call.action.sources")
-        include.append("web_search_call.results")
+        if include_web_search_results:
+            include.append("web_search_call.results")
     if builtin_cfg and builtin_cfg.file_search:
         include.append("file_search_call.results")
     if builtin_cfg and builtin_cfg.code_interpreter:
