@@ -26,6 +26,27 @@ class ChatService:
         self.default_model = default_model
         self.include_web_search_results = include_web_search_results
 
+    def _normalize_tool_choice(self, tool_choice):
+        if not isinstance(tool_choice, dict):
+            return tool_choice
+        if tool_choice.get("type") != "function":
+            return tool_choice
+        function = tool_choice.get("function")
+        if not isinstance(function, dict):
+            return tool_choice
+        name = function.get("name")
+        if not name:
+            return tool_choice
+        return {"type": "function", "name": name}
+
+    def _tool_choice_for_followup(self, original_tool_choice):
+        # After the model emits a custom function call, the follow-up request
+        # should let the model produce the final answer from tool outputs rather
+        # than forcing another tool invocation.
+        if original_tool_choice in ("required", "auto"):
+            return "auto"
+        return None
+
     def _prepare_request(self, req):
         model = req.model or self.default_model
         builtin_cfg = deepcopy(req.x_builtin_tools)
@@ -116,11 +137,12 @@ class ChatService:
     def run_nonstream(self, req):
         model, input_payload, tools, include, bridge_requests = self._prepare_request(req)
         rolling_input = list(input_payload)
+        initial_tool_choice = self._normalize_tool_choice(req.tool_choice)
         resp = self.adapter.create_response(
             model=model,
             input_payload=rolling_input,
             tools=tools,
-            tool_choice=req.tool_choice,
+            tool_choice=initial_tool_choice,
             temperature=req.temperature,
             include=include,
             stream=False,
@@ -150,7 +172,7 @@ class ChatService:
                 model=model,
                 input_payload=rolling_input,
                 tools=tools,
-                tool_choice=req.tool_choice,
+                tool_choice=self._tool_choice_for_followup(req.tool_choice),
                 temperature=req.temperature,
                 include=include,
                 stream=False,
@@ -166,7 +188,7 @@ class ChatService:
             model=model,
             input_payload=input_payload,
             tools=tools,
-            tool_choice=req.tool_choice,
+            tool_choice=self._normalize_tool_choice(req.tool_choice),
             temperature=req.temperature,
             include=include,
             stream=True,

@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import json
+import os
 from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.api.chat_completions import get_service
+from app.adapters.openai_responses import OpenAIResponsesAdapter
+from app.config import settings
 from app.main import app
 from app.services.chat_service import ChatService
+from app.tools.executor import ToolExecutor
 
 
 class DummyAuditLogger:
@@ -258,3 +263,78 @@ def test_stream_returns_chunks_and_done() -> None:
     assert first_payload["object"] == "chat.completion.chunk"
     assert final_payload["choices"][0]["finish_reason"] == "stop"
     assert final_payload["x_openai"]["assistant_text"] == "こんにちは"
+
+
+@pytest.mark.skipif(
+    not os.getenv("RUN_OPENAI_E2E") or not settings.openai_api_key,
+    reason="requires RUN_OPENAI_E2E=1 and OPENAI_API_KEY",
+)
+def test_real_openai_api_custom_tool_roundtrip() -> None:
+    observed_calls: list[tuple[str, str]] = []
+
+    def lookup_order_status(order_id: str) -> dict[str, str]:
+        observed_calls.append(("lookup_order_status", order_id))
+        return {
+            "order_id": order_id,
+            "status": "shipped",
+            "tracking_code": "ZX-31415",
+        }
+
+    service = ChatService(
+        adapter=OpenAIResponsesAdapter(api_key=settings.openai_api_key),
+        tool_executor=ToolExecutor({"lookup_order_status": lookup_order_status}),
+        audit_logger=DummyAuditLogger(),
+        default_model=settings.openai_model_default,
+    )
+    client = _override_service(service)
+
+    try:
+        resp = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": settings.openai_model_default,
+                "tool_choice": {
+                    "type": "function",
+                    "function": {"name": "lookup_order_status"},
+                },
+                "temperature": 0,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": (
+                            "lookup_order_status を必ず1回だけ使って order_id ord_314 を確認し、"
+                            "最終回答は tracking_code と status を短く返してください。"
+                        ),
+                    }
+                ],
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "lookup_order_status",
+                            "description": "Return the shipment status for an order id.",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {
+                                    "order_id": {
+                                        "type": "string",
+                                        "description": "Order identifier such as ord_314",
+                                    }
+                                },
+                                "required": ["order_id"],
+                            },
+                        },
+                    }
+                ],
+            },
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    data = resp.json()
+    content = data["choices"][0]["message"]["content"]
+
+    assert resp.status_code == 200, data
+    assert observed_calls == [("lookup_order_status", "ord_314")]
+    assert "ZX-31415" in content
+    assert "shipped" in content.lower()

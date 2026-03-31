@@ -171,6 +171,7 @@ class ChatServiceTests(unittest.TestCase):
 
         req = ChatCompletionsRequest(
             messages=[ChatMessage(role="user", content="hello")],
+            tool_choice="required",
             tools=[
                 ToolSpec(
                     type="function",
@@ -198,6 +199,38 @@ class ChatServiceTests(unittest.TestCase):
                 },
                 {"type": "function_call_output", "call_id": "call_123", "output": '{"echo":"ok"}'},
             ],
+        )
+        self.assertEqual(adapter.calls[1]["tool_choice"], "auto")
+
+    def test_chat_completions_function_tool_choice_is_normalized_for_responses_api(self) -> None:
+        adapter = CapturingAdapter()
+        service = ChatService(
+            adapter,
+            DummyToolExecutor(),
+            DummyAuditLogger(),
+            default_model="gpt-5.4-mini",
+        )
+
+        req = ChatCompletionsRequest(
+            messages=[ChatMessage(role="user", content="hello")],
+            tool_choice={"type": "function", "function": {"name": "echo_tool"}},
+            tools=[
+                ToolSpec(
+                    type="function",
+                    function=FunctionSpec(
+                        name="echo_tool",
+                        description="Echo text",
+                        parameters={"type": "object", "properties": {"text": {"type": "string"}}},
+                    ),
+                )
+            ],
+        )
+
+        service.run_nonstream(req)
+
+        self.assertEqual(
+            adapter.calls[0]["tool_choice"],
+            {"type": "function", "name": "echo_tool"},
         )
 
 
