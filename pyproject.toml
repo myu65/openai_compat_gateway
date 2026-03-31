@@ -15,3 +15,8 @@ dependencies = [
 dev = [
     "pytest>=9.0.2",
 ]
+
+[tool.pytest.ini_options]
+markers = [
+    "e2e: hits the real OpenAI API and requires explicit opt-in",
+]

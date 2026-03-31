@@ -265,6 +265,7 @@ def test_stream_returns_chunks_and_done() -> None:
     assert final_payload["x_openai"]["assistant_text"] == "こんにちは"
 
 
+@pytest.mark.e2e
 @pytest.mark.skipif(
     not os.getenv("RUN_OPENAI_E2E") or not settings.openai_api_key,
     reason="requires RUN_OPENAI_E2E=1 and OPENAI_API_KEY",

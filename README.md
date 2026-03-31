@@ -38,8 +38,20 @@ uv run uvicorn app.main:app --reload --port 8000
 ## Test
 
 ```bash
-uv run pytest
+./scripts/test-fast.sh
 ```
+
+Run the real OpenAI E2E explicitly:
+
+```bash
+./scripts/test-e2e.sh
+```
+
+Available entry points:
+- `./scripts/test-fast.sh` - default local/CI path, excludes real OpenAI E2E
+- `./scripts/test-all.sh` - run the full pytest suite
+- `./scripts/test-e2e.sh` - opt in to real OpenAI API tests with `RUN_OPENAI_E2E=1`
+- `./scripts/run.sh` - start the FastAPI app locally
 
 ## Example request
 
