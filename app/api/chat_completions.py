@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 import uuid
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.config import settings
@@ -43,8 +43,7 @@ def get_service() -> ChatService:
 
 
 @router.post("/v1/chat/completions")
-def chat_completions(req: ChatCompletionsRequest):
-    svc = get_service()
+def chat_completions(req: ChatCompletionsRequest, svc: ChatService = Depends(get_service)):
     if req.stream:
         stream = svc.run_stream(req)
         return StreamingResponse(stream, media_type="text/event-stream")
