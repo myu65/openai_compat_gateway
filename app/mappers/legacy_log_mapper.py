@@ -18,6 +18,8 @@ def _collect_message_text(item: Any) -> str:
 def _collect_url_citations(item: Any) -> list[dict[str, Any]]:
     citations: list[dict[str, Any]] = []
     for content_item in getattr(item, "content", []) or []:
+        # The model's final answer can carry richer URL citations here than the
+        # raw web_search_call sources, so surface them separately in legacy logs.
         for annotation in getattr(content_item, "annotations", []) or []:
             if getattr(annotation, "type", None) != "url_citation":
                 continue
@@ -62,6 +64,8 @@ def to_legacy_log_steps(resp) -> list[dict[str, Any]]:
             payload = {
                 "query": getattr(action, "query", None) if action else None,
                 "sources": [
+                    # Preserve the source type from OpenAI because it is not
+                    # always a normal URL-backed web page.
                     {
                         "type": getattr(s, "type", None),
                         "title": getattr(s, "title", None),

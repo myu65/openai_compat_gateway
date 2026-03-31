@@ -23,6 +23,8 @@ def _normalize_usage(usage: Any) -> dict[str, Any] | None:
 
 
 def _append_annotation_citations(citations: list[Citation], content_item: Any) -> None:
+    # Web search answers can attach the user-facing citations to message annotations
+    # even when the underlying tool event exposes only opaque/internal sources.
     for annotation in getattr(content_item, "annotations", []) or []:
         if getattr(annotation, "type", None) != "url_citation":
             continue
@@ -78,6 +80,9 @@ def normalize_final_response(resp, bridge_executions: list[BridgeExecution] | No
                 )
             )
             if action and getattr(action, "sources", None):
+                # Search sources are not guaranteed to be normal web pages. For
+                # weather-like queries the tool may emit `type="api"` sources
+                # without URL/title, so keep these fields nullable.
                 for s in action.sources:
                     citations.append(
                         Citation(
