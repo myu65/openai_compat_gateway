@@ -6,6 +6,22 @@ from app.mappers.legacy_log_mapper import to_legacy_log_steps
 from app.schemas.internal import BridgeExecution, BuiltinToolEvent, Citation, NormalizedResponse
 
 
+def _normalize_usage(usage: Any) -> dict[str, Any] | None:
+    if usage is None:
+        return None
+    if isinstance(usage, dict):
+        return usage
+    if hasattr(usage, "model_dump"):
+        return usage.model_dump()
+    if hasattr(usage, "dict"):
+        return usage.dict()
+    return {
+        key: value
+        for key, value in vars(usage).items()
+        if not key.startswith("_")
+    }
+
+
 def normalize_final_response(resp, bridge_executions: list[BridgeExecution] | None = None) -> NormalizedResponse:
     assistant_text_parts: list[str] = []
     tool_calls: list[dict[str, Any]] = []
@@ -97,7 +113,7 @@ def normalize_final_response(resp, bridge_executions: list[BridgeExecution] | No
         builtin_tool_events=builtin_tool_events,
         file_search_results=file_search_results,
         code_interpreter_outputs=code_interpreter_outputs,
-        usage=getattr(resp, "usage", None),
+        usage=_normalize_usage(getattr(resp, "usage", None)),
         legacy_steps=to_legacy_log_steps(resp),
         bridge_executions=bridge_executions or [],
     )
