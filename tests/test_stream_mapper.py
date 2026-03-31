@@ -66,6 +66,31 @@ class StreamMapperTests(unittest.TestCase):
         self.assertEqual(final_payload["x_openai"]["assistant_text"], "sunny")
         self.assertEqual(len(final_payload["x_openai"]["citations"]), 2)
 
+    def test_stream_function_call_finishes_with_tool_calls(self) -> None:
+        events = [
+            SimpleNamespace(
+                type="response.function_call_arguments.delta",
+                call_id="call_1",
+                name="lookup_profile",
+                delta='{"user_id":"u1"}',
+            ),
+            SimpleNamespace(
+                type="response.output_item.done",
+                item=SimpleNamespace(
+                    type="function_call",
+                    call_id="call_1",
+                    name="lookup_profile",
+                    arguments='{"user_id":"u1"}',
+                ),
+            ),
+            SimpleNamespace(type="response.completed"),
+        ]
+
+        chunks = list(map_stream_events(events, "gpt-5.4-mini"))
+
+        final_payload = json.loads(chunks[-2][len("data: ") :].strip().removesuffix("\\n\\n"))
+        self.assertEqual(final_payload["choices"][0]["finish_reason"], "tool_calls")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -5,7 +5,7 @@ This project exposes a `POST /v1/chat/completions` endpoint that looks like Chat
 Implemented scope:
 - non-stream chat completions
 - streaming SSE in chat.completion.chunk style
-- custom function tools in non-stream mode
+- custom function tools in chat.completions-compatible mode
 - bridge selected custom tools to OpenAI built-in tools
 - built-in `web_search`, `file_search`, `code_interpreter`
 - legacy display/log reconstruction (`assistant -> tool -> assistant` style)
@@ -69,8 +69,84 @@ curl -s http://localhost:8000/v1/chat/completions \
   }' | jq
 ```
 
-## Custom-tool bridge
+## Compatibility model
 
-If the request includes function tools such as `web_search`, `search_web`, or `browser_search`, the gateway can intercept those names and satisfy them with OpenAI built-in `web_search`, while emitting legacy-looking tool messages for UI/log compatibility.
+This gateway is intended to let existing `chat/completions` clients keep working while the backend uses the Responses API.
 
-Bridge mapping lives in `app/tools/registry.py`.
+Tool behavior is split into two categories:
+- custom function tools: OpenAI Chat Completions compatible pass-through
+- built-in tools: gateway-side bridge to OpenAI Responses built-ins
+
+### Custom function tools
+
+Custom tools are treated as client-side tools, which matches the usual LangChain / Chat Completions flow:
+- the client sends `tools` in Chat Completions format
+- the gateway forwards them to the Responses API as function tools
+- if the model decides to call a custom tool, the gateway returns `message.tool_calls`
+- `finish_reason` is `tool_calls` for that turn
+- the client executes the tool and sends a follow-up request with:
+  - the prior assistant message containing `tool_calls`
+  - one or more `role="tool"` messages with `tool_call_id`
+- the gateway reconstructs Responses API `function_call` / `function_call_output` items from those messages
+
+This means the gateway does not execute arbitrary custom tools on behalf of the client. Existing LangChain-style tool loops are expected to keep running on the client side.
+
+### Built-in tool bridge
+
+OpenAI built-in tools such as `web_search`, `file_search`, and `code_interpreter` do not behave like normal client-side custom tools. To keep older `chat/completions` clients usable, the gateway can bridge selected function-tool names to Responses built-ins.
+
+Supported bridge names currently include:
+- `web_search`
+- `search_web`
+- `browser_search`
+- `file_search`
+
+When one of those names is present in `tools`, the gateway:
+- removes that tool from the custom function-tool list sent to the model
+- enables the matching Responses built-in tool
+- maps built-in execution back into legacy-looking `assistant -> tool -> assistant` logs in `x_openai.legacy_steps`
+
+The bridge is intentionally opinionated. It exists to preserve compatibility for older clients that only know how to declare function tools, even when the underlying capability is really an OpenAI built-in.
+
+### Finish reasons
+
+The gateway returns Chat Completions-style finish reasons:
+- `tool_calls` when the model turn ends with custom function calls
+- `stop` when the model turn ends with a final assistant answer
+
+Streaming responses follow the same rule in the final chunk.
+
+### Follow-up request shape
+
+For custom tools, the expected follow-up request looks like normal Chat Completions traffic:
+
+```json
+{
+  "messages": [
+    {"role": "user", "content": "u1を見て"},
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_1",
+          "type": "function",
+          "function": {
+            "name": "lookup_profile",
+            "arguments": "{\"user_id\":\"u1\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_1",
+      "content": "{\"role\":\"admin\"}"
+    }
+  ]
+}
+```
+
+The gateway converts that follow-up into Responses API input items internally and then continues the turn against the Responses backend.
+
+Bridge name mapping lives in `app/tools/registry.py`.

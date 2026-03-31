@@ -42,6 +42,12 @@ def get_service() -> ChatService:
     return _service
 
 
+def _finish_reason_for_normalized_response(normalized) -> str:
+    if normalized.tool_calls:
+        return "tool_calls"
+    return "stop"
+
+
 @router.post("/v1/chat/completions")
 def chat_completions(req: ChatCompletionsRequest, svc: ChatService = Depends(get_service)):
     if req.stream:
@@ -62,7 +68,7 @@ def chat_completions(req: ChatCompletionsRequest, svc: ChatService = Depends(get
                     "content": normalized.assistant_text,
                     "tool_calls": normalized.tool_calls,
                 },
-                "finish_reason": "stop",
+                "finish_reason": _finish_reason_for_normalized_response(normalized),
             }
         ],
         "usage": normalized.usage,

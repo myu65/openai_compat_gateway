@@ -1,17 +1,63 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from app.schemas.compat import BuiltinToolsConfig, ToolSpec
 
 
+def _normalize_message_content(content: Any) -> Any:
+    if content is None:
+        return ""
+    if isinstance(content, (str, list)):
+        return content
+    if isinstance(content, dict):
+        return content
+    return str(content)
+
+
+def _normalize_tool_output(content: Any) -> str:
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    return json.dumps(content, ensure_ascii=False)
+
+
 def to_responses_input(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for m in messages:
-        content = m["content"]
-        if not isinstance(content, str):
-            content = str(content)
-        item: dict[str, Any] = {"role": m["role"], "content": content}
+        role = m["role"]
+        tool_calls = m.get("tool_calls") or []
+
+        if role == "assistant" and tool_calls:
+            content = _normalize_message_content(m.get("content"))
+            if content not in ("", [], None):
+                out.append({"role": "assistant", "content": content})
+
+            for tool_call in tool_calls:
+                function = tool_call.get("function") or {}
+                out.append(
+                    {
+                        "type": "function_call",
+                        "call_id": tool_call.get("id"),
+                        "name": function.get("name"),
+                        "arguments": function.get("arguments", "{}"),
+                    }
+                )
+            continue
+
+        if role == "tool":
+            out.append(
+                {
+                    "type": "function_call_output",
+                    "call_id": m.get("tool_call_id"),
+                    "output": _normalize_tool_output(m.get("content")),
+                }
+            )
+            continue
+
+        item: dict[str, Any] = {"role": role, "content": _normalize_message_content(m.get("content"))}
         if m.get("name"):
             item["name"] = m["name"]
         if m.get("tool_call_id"):

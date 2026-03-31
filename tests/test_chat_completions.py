@@ -12,9 +12,6 @@ from app.adapters.openai_responses import OpenAIResponsesAdapter
 from app.config import settings
 from app.main import app
 from app.services.chat_service import ChatService
-from app.tools.executor import ToolExecutor
-
-
 class DummyAuditLogger:
     def __init__(self) -> None:
         self.logged = []
@@ -34,18 +31,6 @@ class CapturingAdapter:
         return self.responses.pop(0)
 
 
-class ExecutingToolExecutor:
-    def __init__(self) -> None:
-        self.calls = []
-
-    def has(self, name: str) -> bool:
-        return name == "lookup_profile"
-
-    def execute(self, name: str, arguments_json: str) -> str:
-        self.calls.append((name, arguments_json))
-        return '{"role":"admin"}'
-
-
 class NullToolExecutor:
     def has(self, _name: str) -> bool:
         return False
@@ -56,7 +41,7 @@ def _override_service(service: ChatService) -> TestClient:
     return TestClient(app)
 
 
-def test_function_call_roundtrip() -> None:
+def test_unknown_custom_tool_is_returned_to_client_for_execution() -> None:
     adapter = CapturingAdapter(
         responses=[
             SimpleNamespace(
@@ -69,22 +54,12 @@ def test_function_call_roundtrip() -> None:
                     )
                 ],
                 usage={"total_tokens": 3},
-            ),
-            SimpleNamespace(
-                output=[
-                    SimpleNamespace(
-                        type="message",
-                        content=[SimpleNamespace(type="output_text", text="ユーザーは管理者です", annotations=[])],
-                    )
-                ],
-                usage={"total_tokens": 12},
-            ),
+            )
         ]
     )
-    tool_executor = ExecutingToolExecutor()
     service = ChatService(
         adapter=adapter,
-        tool_executor=tool_executor,
+        tool_executor=NullToolExecutor(),
         audit_logger=DummyAuditLogger(),
         default_model="gpt-5.4-mini",
     )
@@ -94,7 +69,6 @@ def test_function_call_roundtrip() -> None:
         resp = client.post(
             "/v1/chat/completions",
             json={
-                "model": "gpt-5.4-mini",
                 "messages": [{"role": "user", "content": "u1を見て"}],
                 "tools": [
                     {
@@ -105,7 +79,6 @@ def test_function_call_roundtrip() -> None:
                             "parameters": {
                                 "type": "object",
                                 "properties": {"user_id": {"type": "string"}},
-                                "required": ["user_id"],
                             },
                         },
                     }
@@ -117,8 +90,89 @@ def test_function_call_roundtrip() -> None:
 
     data = resp.json()
     assert resp.status_code == 200
-    assert tool_executor.calls == [("lookup_profile", '{"user_id":"u1"}')]
-    assert adapter.calls[1]["input_payload"] == [
+    assert data["choices"][0]["finish_reason"] == "tool_calls"
+    assert data["choices"][0]["message"]["content"] == ""
+    assert data["choices"][0]["message"]["tool_calls"] == [
+        {
+            "id": "call_1",
+            "type": "function",
+            "function": {
+                "name": "lookup_profile",
+                "arguments": '{"user_id":"u1"}',
+            },
+        }
+    ]
+
+
+def test_followup_tool_messages_are_replayed_to_responses_api() -> None:
+    adapter = CapturingAdapter(
+        responses=[
+            SimpleNamespace(
+                output=[
+                    SimpleNamespace(
+                        type="message",
+                        content=[SimpleNamespace(type="output_text", text="ユーザーは管理者です", annotations=[])],
+                    )
+                ],
+                usage={"total_tokens": 12},
+            )
+        ]
+    )
+    service = ChatService(
+        adapter=adapter,
+        tool_executor=NullToolExecutor(),
+        audit_logger=DummyAuditLogger(),
+        default_model="gpt-5.4-mini",
+    )
+    client = _override_service(service)
+
+    try:
+        resp = client.post(
+            "/v1/chat/completions",
+            json={
+                "messages": [
+                    {"role": "user", "content": "u1を見て"},
+                    {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call_1",
+                                "type": "function",
+                                "function": {
+                                    "name": "lookup_profile",
+                                    "arguments": '{"user_id":"u1"}',
+                                },
+                            }
+                        ],
+                    },
+                    {
+                        "role": "tool",
+                        "tool_call_id": "call_1",
+                        "content": '{"role":"admin"}',
+                    },
+                ],
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "lookup_profile",
+                            "description": "lookup",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {"user_id": {"type": "string"}},
+                            },
+                        },
+                    }
+                ],
+            },
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    data = resp.json()
+    assert resp.status_code == 200
+    assert adapter.calls[0]["input_payload"] == [
         {"role": "user", "content": "u1を見て"},
         {
             "type": "function_call",
@@ -128,8 +182,8 @@ def test_function_call_roundtrip() -> None:
         },
         {"type": "function_call_output", "call_id": "call_1", "output": '{"role":"admin"}'},
     ]
+    assert data["choices"][0]["finish_reason"] == "stop"
     assert data["choices"][0]["message"]["content"] == "ユーザーは管理者です"
-    assert data["usage"] == {"total_tokens": 12}
 
 
 def test_web_search_bridge_surfaces_citations_and_legacy_steps() -> None:
@@ -265,6 +319,69 @@ def test_stream_returns_chunks_and_done() -> None:
     assert final_payload["x_openai"]["assistant_text"] == "こんにちは"
 
 
+def test_stream_tool_call_finishes_with_tool_calls() -> None:
+    adapter = CapturingAdapter(
+        responses=[
+            [
+                SimpleNamespace(
+                    type="response.function_call_arguments.delta",
+                    call_id="call_1",
+                    name="lookup_profile",
+                    delta='{"user_id":"u1"}',
+                ),
+                SimpleNamespace(
+                    type="response.output_item.done",
+                    item=SimpleNamespace(
+                        type="function_call",
+                        call_id="call_1",
+                        name="lookup_profile",
+                        arguments='{"user_id":"u1"}',
+                    ),
+                ),
+                SimpleNamespace(type="response.completed"),
+            ]
+        ]
+    )
+    service = ChatService(
+        adapter=adapter,
+        tool_executor=NullToolExecutor(),
+        audit_logger=DummyAuditLogger(),
+        default_model="gpt-5.4-mini",
+    )
+    client = _override_service(service)
+
+    try:
+        with client.stream(
+            "POST",
+            "/v1/chat/completions",
+            json={
+                "messages": [{"role": "user", "content": "u1を見て"}],
+                "stream": True,
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "lookup_profile",
+                            "description": "lookup",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {"user_id": {"type": "string"}},
+                            },
+                        },
+                    }
+                ],
+            },
+        ) as resp:
+            body = "".join(resp.iter_text())
+    finally:
+        app.dependency_overrides.clear()
+
+    assert resp.status_code == 200
+    events = [line[len("data: ") :] for line in body.replace("\\n", "\n").splitlines() if line.startswith("data: ")]
+    final_payload = json.loads(events[-2])
+    assert final_payload["choices"][0]["finish_reason"] == "tool_calls"
+
+
 @pytest.mark.e2e
 @pytest.mark.skipif(
     not os.getenv("RUN_OPENAI_E2E") or not settings.openai_api_key,
@@ -283,7 +400,7 @@ def test_real_openai_api_custom_tool_roundtrip() -> None:
 
     service = ChatService(
         adapter=OpenAIResponsesAdapter(api_key=settings.openai_api_key),
-        tool_executor=ToolExecutor({"lookup_order_status": lookup_order_status}),
+        tool_executor=NullToolExecutor(),
         audit_logger=DummyAuditLogger(),
         default_model=settings.openai_model_default,
     )
@@ -333,9 +450,9 @@ def test_real_openai_api_custom_tool_roundtrip() -> None:
         app.dependency_overrides.clear()
 
     data = resp.json()
-    content = data["choices"][0]["message"]["content"]
+    tool_calls = data["choices"][0]["message"]["tool_calls"]
 
     assert resp.status_code == 200, data
-    assert observed_calls == [("lookup_order_status", "ord_314")]
-    assert "ZX-31415" in content
-    assert "shipped" in content.lower()
+    assert observed_calls == []
+    assert data["choices"][0]["finish_reason"] == "tool_calls"
+    assert tool_calls[0]["function"]["name"] == "lookup_order_status"

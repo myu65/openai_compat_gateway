@@ -21,15 +21,6 @@ class DummyToolExecutor:
         return False
 
 
-class ExecutingToolExecutor:
-    def has(self, name: str) -> bool:
-        return name == "echo_tool"
-
-    def execute(self, name: str, arguments_json: str) -> str:
-        self.last_call = (name, arguments_json)
-        return '{"echo":"ok"}'
-
-
 class CapturingAdapter:
     def __init__(self, responses=None) -> None:
         self.calls = []
@@ -137,20 +128,9 @@ class ChatServiceTests(unittest.TestCase):
         self.assertEqual(adapter.calls[0]["tools"], [{"type": "web_search"}])
         self.assertEqual(normalized.bridge_executions[0].display_tool_name, "search_web")
 
-    def test_nonstream_custom_function_loop_replays_in_request_state(self) -> None:
+    def test_nonstream_client_tool_followup_replays_in_request_state(self) -> None:
         adapter = CapturingAdapter(
             responses=[
-                SimpleNamespace(
-                    output=[
-                        SimpleNamespace(
-                            type="function_call",
-                            call_id="call_123",
-                            name="echo_tool",
-                            arguments='{"text":"hello"}',
-                        )
-                    ],
-                    usage={"total_tokens": 1},
-                ),
                 SimpleNamespace(
                     output=[
                         SimpleNamespace(
@@ -164,14 +144,28 @@ class ChatServiceTests(unittest.TestCase):
         )
         service = ChatService(
             adapter,
-            ExecutingToolExecutor(),
+            DummyToolExecutor(),
             DummyAuditLogger(),
             default_model="gpt-5.4-mini",
         )
 
         req = ChatCompletionsRequest(
-            messages=[ChatMessage(role="user", content="hello")],
-            tool_choice="required",
+            messages=[
+                ChatMessage(role="user", content="hello"),
+                ChatMessage(
+                    role="assistant",
+                    content=None,
+                    tool_calls=[
+                        {
+                            "id": "call_123",
+                            "type": "function",
+                            "function": {"name": "echo_tool", "arguments": '{"text":"hello"}'},
+                        }
+                    ],
+                ),
+                ChatMessage(role="tool", content='{"echo":"ok"}', tool_call_id="call_123"),
+            ],
+            tool_choice="auto",
             tools=[
                 ToolSpec(
                     type="function",
@@ -188,7 +182,7 @@ class ChatServiceTests(unittest.TestCase):
 
         self.assertEqual(normalized.assistant_text, "done")
         self.assertEqual(
-            adapter.calls[1]["input_payload"],
+            adapter.calls[0]["input_payload"],
             [
                 {"role": "user", "content": "hello"},
                 {
@@ -200,7 +194,7 @@ class ChatServiceTests(unittest.TestCase):
                 {"type": "function_call_output", "call_id": "call_123", "output": '{"echo":"ok"}'},
             ],
         )
-        self.assertEqual(adapter.calls[1]["tool_choice"], "auto")
+        self.assertEqual(adapter.calls[0]["tool_choice"], "auto")
 
     def test_chat_completions_function_tool_choice_is_normalized_for_responses_api(self) -> None:
         adapter = CapturingAdapter()

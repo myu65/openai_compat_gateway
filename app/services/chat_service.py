@@ -53,6 +53,7 @@ class ChatService:
         custom_tools = list(req.tools or [])
         bridge_requests: list[BridgeExecution] = []
         bridge_messages: list[dict[str, Any]] = []
+        forwarded_messages = []
 
         for tool in custom_tools:
             spec = find_bridge_for_tool_name(tool.function.name)
@@ -83,6 +84,7 @@ class ChatService:
             if message.role == "tool" and message.name:
                 spec = find_bridge_for_tool_name(message.name)
                 if not spec:
+                    forwarded_messages.append(message.model_dump())
                     continue
                 try:
                     payload = json.loads(message.content) if isinstance(message.content, str) else message.content
@@ -115,6 +117,9 @@ class ChatService:
                         builtin_cfg.file_search = builtin_cfg.file_search or {}
                     if query:
                         bridge_messages.append({"role": "user", "content": f"Use file search to answer this query: {query}"})
+                continue
+
+            forwarded_messages.append(message.model_dump())
 
         # Remove bridged tools from custom tool list so the model does not emit a custom function_call for them.
         filtered_custom_tools = []
@@ -123,7 +128,7 @@ class ChatService:
                 continue
             filtered_custom_tools.append(t)
 
-        input_payload = to_responses_input([m.model_dump() for m in req.messages])
+        input_payload = to_responses_input(forwarded_messages)
         input_payload.extend(bridge_messages)
         custom_responses_tools = to_responses_custom_tools(filtered_custom_tools)
         merged_tools = merge_builtin_tools(custom_responses_tools, builtin_cfg)
@@ -136,47 +141,16 @@ class ChatService:
 
     def run_nonstream(self, req):
         model, input_payload, tools, include, bridge_requests = self._prepare_request(req)
-        rolling_input = list(input_payload)
         initial_tool_choice = self._normalize_tool_choice(req.tool_choice)
         resp = self.adapter.create_response(
             model=model,
-            input_payload=rolling_input,
+            input_payload=input_payload,
             tools=tools,
             tool_choice=initial_tool_choice,
             temperature=req.temperature,
             include=include,
             stream=False,
         )
-
-        while True:
-            function_calls = [i for i in getattr(resp, "output", []) or [] if getattr(i, "type", None) == "function_call"]
-            function_calls = [fc for fc in function_calls if self.tool_executor.has(fc.name)]
-            if not function_calls:
-                break
-
-            followup_input: list[dict[str, Any]] = []
-            for fc in function_calls:
-                followup_input.append(
-                    {
-                        "type": "function_call",
-                        "call_id": fc.call_id,
-                        "name": fc.name,
-                        "arguments": fc.arguments,
-                    }
-                )
-                result = self.tool_executor.execute(fc.name, fc.arguments)
-                followup_input.append({"type": "function_call_output", "call_id": fc.call_id, "output": result})
-
-            rolling_input.extend(followup_input)
-            resp = self.adapter.create_response(
-                model=model,
-                input_payload=rolling_input,
-                tools=tools,
-                tool_choice=self._tool_choice_for_followup(req.tool_choice),
-                temperature=req.temperature,
-                include=include,
-                stream=False,
-            )
 
         normalized = normalize_final_response(resp, bridge_executions=bridge_requests)
         self.audit_logger.log_chat(req, normalized)

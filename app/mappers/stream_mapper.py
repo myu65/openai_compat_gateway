@@ -24,6 +24,19 @@ def _collect_message_text(item: Any) -> str:
     return "".join(parts).strip()
 
 
+def _stream_finish_reason(completed_items: list[Any]) -> str:
+    if any(getattr(item, "type", None) == "function_call" for item in completed_items):
+        return "tool_calls"
+    return "stop"
+
+
+def _last_assistant_text(completed_items: list[Any]) -> str:
+    for item in reversed(completed_items):
+        if getattr(item, "type", None) == "message":
+            return _collect_message_text(item)
+    return ""
+
+
 def map_stream_events(
     openai_stream: Iterable[Any],
     model: str,
@@ -153,12 +166,12 @@ def map_stream_events(
                     "object": "chat.completion.chunk",
                     "created": created,
                     "model": model,
-                    "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                    "choices": [{"index": 0, "delta": {}, "finish_reason": _stream_finish_reason(completed_items)}],
                     "x_openai": {
                         "citations": citations,
                         "builtin_tool_events": builtin_tool_events,
                         "legacy_steps": legacy_steps,
-                        "assistant_text": _collect_message_text(completed_items[-1]) if completed_items else "",
+                        "assistant_text": _last_assistant_text(completed_items),
                     },
                 }
             )
