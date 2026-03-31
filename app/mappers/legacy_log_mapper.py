@@ -15,6 +15,21 @@ def _collect_message_text(item: Any) -> str:
     return "".join(parts).strip()
 
 
+def _collect_url_citations(item: Any) -> list[dict[str, Any]]:
+    citations: list[dict[str, Any]] = []
+    for content_item in getattr(item, "content", []) or []:
+        for annotation in getattr(content_item, "annotations", []) or []:
+            if getattr(annotation, "type", None) != "url_citation":
+                continue
+            citations.append(
+                {
+                    "title": getattr(annotation, "title", None),
+                    "url": getattr(annotation, "url", None),
+                }
+            )
+    return citations
+
+
 def to_legacy_log_steps(resp) -> list[dict[str, Any]]:
     steps: list[dict[str, Any]] = []
     pending_tool_calls: list[dict[str, Any]] = []
@@ -37,6 +52,7 @@ def to_legacy_log_steps(resp) -> list[dict[str, Any]]:
                     "role": "assistant",
                     "content": _collect_message_text(item),
                     "tool_calls": pending_tool_calls or None,
+                    "citations": _collect_url_citations(item) or None,
                 }
             )
             pending_tool_calls = []
@@ -46,7 +62,11 @@ def to_legacy_log_steps(resp) -> list[dict[str, Any]]:
             payload = {
                 "query": getattr(action, "query", None) if action else None,
                 "sources": [
-                    {"title": getattr(s, "title", None), "url": getattr(s, "url", None)}
+                    {
+                        "type": getattr(s, "type", None),
+                        "title": getattr(s, "title", None),
+                        "url": getattr(s, "url", None),
+                    }
                     for s in (getattr(action, "sources", None) or [])
                 ],
             }

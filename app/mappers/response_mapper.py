@@ -22,6 +22,18 @@ def _normalize_usage(usage: Any) -> dict[str, Any] | None:
     }
 
 
+def _append_annotation_citations(citations: list[Citation], content_item: Any) -> None:
+    for annotation in getattr(content_item, "annotations", []) or []:
+        if getattr(annotation, "type", None) != "url_citation":
+            continue
+        citations.append(
+            Citation(
+                url=getattr(annotation, "url", None),
+                title=getattr(annotation, "title", None),
+            )
+        )
+
+
 def normalize_final_response(resp, bridge_executions: list[BridgeExecution] | None = None) -> NormalizedResponse:
     assistant_text_parts: list[str] = []
     tool_calls: list[dict[str, Any]] = []
@@ -40,6 +52,7 @@ def normalize_final_response(resp, bridge_executions: list[BridgeExecution] | No
                     text = getattr(c, "text", None)
                     if text:
                         assistant_text_parts.append(text)
+                    _append_annotation_citations(citations, c)
 
         elif item_type == "function_call":
             tool_calls.append(
@@ -66,7 +79,12 @@ def normalize_final_response(resp, bridge_executions: list[BridgeExecution] | No
             )
             if action and getattr(action, "sources", None):
                 for s in action.sources:
-                    citations.append(Citation(url=getattr(s, "url", None), title=getattr(s, "title", None)))
+                    citations.append(
+                        Citation(
+                            url=getattr(s, "url", None),
+                            title=getattr(s, "title", None),
+                        )
+                    )
 
         elif item_type == "file_search_call":
             results = getattr(item, "results", None) or []

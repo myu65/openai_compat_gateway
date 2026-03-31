@@ -35,7 +35,19 @@ class NormalizeFinalResponseTests(unittest.TestCase):
                 ),
                 SimpleNamespace(
                     type="message",
-                    content=[SimpleNamespace(type="output_text", text="answer")],
+                    content=[
+                        SimpleNamespace(
+                            type="output_text",
+                            text="answer",
+                            annotations=[
+                                SimpleNamespace(
+                                    type="url_citation",
+                                    url="https://example.org/detail",
+                                    title="Example Detail",
+                                )
+                            ],
+                        )
+                    ],
                 ),
             ],
             usage=SimpleNamespace(input_tokens=3, output_tokens=7, total_tokens=10),
@@ -44,8 +56,10 @@ class NormalizeFinalResponseTests(unittest.TestCase):
         normalized = normalize_final_response(resp)
 
         self.assertEqual(normalized.assistant_text, "answer")
-        self.assertEqual(len(normalized.citations), 1)
+        self.assertEqual(len(normalized.citations), 2)
         self.assertEqual(normalized.citations[0].url, "https://example.com")
+        self.assertEqual(normalized.citations[1].url, "https://example.org/detail")
+        self.assertEqual(normalized.citations[1].title, "Example Detail")
         self.assertEqual(normalized.builtin_tool_events[0].payload["sources_count"], 1)
         self.assertEqual(
             normalized.usage,
