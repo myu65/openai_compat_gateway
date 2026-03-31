@@ -16,17 +16,22 @@ Implemented scope:
 
 - `OPENAI_API_KEY` - required
 - `OPENAI_MODEL_DEFAULT` - optional, default model alias fallback
+- `.env` is loaded automatically on startup if present
 
 ## Install
 
 ```bash
-pip install -r requirements.txt
+cp .env.sample .env
+```
+
+```bash
+uv sync
 ```
 
 ## Run
 
 ```bash
-uvicorn app.main:app --reload --port 8000
+uv run uvicorn app.main:app --reload --port 8000
 ```
 
 ## Example request
