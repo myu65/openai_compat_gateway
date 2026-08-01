@@ -3,11 +3,8 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
-import httpx
-from langchain_core.messages import HumanMessage
 from openai.types.chat import ChatCompletionChunk
 
-from app.integrations.langchain import ChatOpenAICompat
 from app.mappers.response_mapper import normalize_final_response
 from app.mappers.stream_mapper import map_stream_events
 from app.schemas.compat import (
@@ -289,36 +286,3 @@ def test_auto_mode_splits_native_and_responses_paths() -> None:
 
     assert svc.select_mode(plain) == "chat_completions"
     assert svc.select_mode(reasoned_tool) == "responses"
-
-
-def test_langchain_adapter_round_trips_gateway_state() -> None:
-    llm = ChatOpenAICompat(
-        model="gpt-5.6",
-        api_key="test",
-        base_url="http://gateway.invalid/v1",
-        http_client=httpx.Client(trust_env=False),
-        http_async_client=httpx.AsyncClient(trust_env=False),
-    )
-    state = {"response_items": [{"type": "reasoning", "encrypted_content": "opaque"}]}
-    result = llm._create_chat_result(
-        {
-            "id": "chatcmpl-1",
-            "object": "chat.completion",
-            "created": 1,
-            "model": "gpt-5.6",
-            "choices": [
-                {
-                    "index": 0,
-                    "message": {"role": "assistant", "content": "answer", "x_openai": state},
-                    "finish_reason": "stop",
-                }
-            ],
-            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
-        }
-    )
-    message = result.generations[0].message
-
-    payload = llm._get_request_payload([message, HumanMessage(content="next")])
-
-    assert message.additional_kwargs["x_openai"] == state
-    assert payload["messages"][0]["x_openai"] == state

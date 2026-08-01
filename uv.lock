@@ -2,6 +2,12 @@ version = 1
 revision = 3
 requires-python = ">=3.11"
 
+[manifest]
+members = [
+    "openai-compat-gateway",
+    "openai-compat-gateway-client",
+]
+
 [[package]]
 name = "annotated-doc"
 version = "0.0.4"
@@ -424,14 +430,9 @@ dependencies = [
     { name = "uvicorn" },
 ]
 
-[package.optional-dependencies]
-langchain = [
-    { name = "langchain-openai" },
-]
-
 [package.dev-dependencies]
 dev = [
-    { name = "langchain-openai" },
+    { name = "openai-compat-gateway-client" },
     { name = "pytest" },
     { name = "ruff" },
 ]
@@ -439,19 +440,28 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.135.2" },
-    { name = "langchain-openai", marker = "extra == 'langchain'", specifier = ">=1.4.1" },
     { name = "openai", specifier = ">=2.30.0" },
     { name = "pydantic", specifier = ">=2.12.5" },
     { name = "uvicorn", specifier = ">=0.42.0" },
 ]
-provides-extras = ["langchain"]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "langchain-openai", specifier = ">=1.4.1" },
+    { name = "openai-compat-gateway-client", editable = "packages/client" },
     { name = "pytest", specifier = ">=9.0.2" },
     { name = "ruff", specifier = ">=0.12.0" },
 ]
+
+[[package]]
+name = "openai-compat-gateway-client"
+version = "0.1.0"
+source = { editable = "packages/client" }
+dependencies = [
+    { name = "langchain-openai" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "langchain-openai", specifier = ">=0.3.35,<=1.4.1" }]
 
 [[package]]
 name = "orjson"
