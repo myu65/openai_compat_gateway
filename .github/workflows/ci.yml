@@ -54,3 +54,31 @@ jobs:
           --with pytest
           --with "langchain-openai==${{ matrix.langchain-openai-version }}"
           pytest packages/client/tests -q
+
+  client-vcs-install:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+          enable-cache: true
+      - name: Install the client with pip from the Git subdirectory
+        env:
+          CLIENT_GIT_REF: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          package_url="openai-compat-gateway-client @ git+https://github.com/myu65/openai_compat_gateway.git@${CLIENT_GIT_REF}#subdirectory=packages/client"
+          pip_test_root="$(mktemp -d)"
+          uv venv "${pip_test_root}/venv" --python 3.13 --seed
+          "${pip_test_root}/venv/bin/python" -m pip install "${package_url}"
+          "${pip_test_root}/venv/bin/python" -c "from openai_compat_gateway_client import ChatOpenAICompat"
+      - name: Install the client with uv from the Git subdirectory
+        env:
+          CLIENT_GIT_REF: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          package_url="openai-compat-gateway-client @ git+https://github.com/myu65/openai_compat_gateway.git@${CLIENT_GIT_REF}#subdirectory=packages/client"
+          uv_test_root="$(mktemp -d)"
+          cd "${uv_test_root}"
+          uv init --bare --python 3.13
+          uv add "${package_url}"
+          uv run python -c "from openai_compat_gateway_client import ChatOpenAICompat"
