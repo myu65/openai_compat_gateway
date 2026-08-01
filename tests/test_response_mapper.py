@@ -17,7 +17,7 @@ class NormalizeFinalResponseTests(unittest.TestCase):
 
         self.assertEqual(
             normalized,
-            {"input_tokens": 12, "output_tokens": 34, "total_tokens": 46},
+            {"prompt_tokens": 12, "completion_tokens": 34, "total_tokens": 46},
         )
 
     def test_web_search_without_results_still_normalizes(self) -> None:
@@ -64,7 +64,7 @@ class NormalizeFinalResponseTests(unittest.TestCase):
         self.assertEqual(normalized.builtin_tool_events[0].payload["sources_count"], 1)
         self.assertEqual(
             normalized.usage,
-            {"input_tokens": 3, "output_tokens": 7, "total_tokens": 10},
+            {"prompt_tokens": 3, "completion_tokens": 7, "total_tokens": 10},
         )
         self.assertEqual(normalized.legacy_steps[0]["tool_calls"][0]["function"]["name"], "openai_builtin.web_search")
 

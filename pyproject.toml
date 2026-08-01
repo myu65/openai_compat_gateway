@@ -11,10 +11,27 @@ dependencies = [
     "uvicorn>=0.42.0",
 ]
 
+[project.optional-dependencies]
+langchain = [
+    "langchain-openai>=1.4.1",
+]
+
 [dependency-groups]
 dev = [
+    "langchain-openai>=1.4.1",
     "pytest>=9.0.2",
+    "ruff>=0.12.0",
 ]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+"app/api/*.py" = ["B008"]
 
 [tool.pytest.ini_options]
 markers = [

@@ -59,7 +59,7 @@ class StreamMapperTests(unittest.TestCase):
             )
         )
 
-        final_payload = json.loads(chunks[-2][len("data: ") :].strip().removesuffix("\\n\\n"))
+        final_payload = json.loads(chunks[-2][len("data: ") :].strip())
         legacy_steps = final_payload["x_openai"]["legacy_steps"]
         self.assertEqual(legacy_steps[0]["tool_calls"][0]["function"]["name"], "web_search")
         self.assertEqual(legacy_steps[1]["name"], "web_search")
@@ -88,7 +88,7 @@ class StreamMapperTests(unittest.TestCase):
 
         chunks = list(map_stream_events(events, "gpt-5.4-mini"))
 
-        final_payload = json.loads(chunks[-2][len("data: ") :].strip().removesuffix("\\n\\n"))
+        final_payload = json.loads(chunks[-2][len("data: ") :].strip())
         self.assertEqual(final_payload["choices"][0]["finish_reason"], "tool_calls")
 
 

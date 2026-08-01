@@ -6,12 +6,15 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
+from openai.types.chat import ChatCompletion
 
-from app.api.chat_completions import get_service
 from app.adapters.openai_responses import OpenAIResponsesAdapter
+from app.api.chat_completions import get_service
 from app.config import settings
 from app.main import app
 from app.services.chat_service import ChatService
+
+
 class DummyAuditLogger:
     def __init__(self) -> None:
         self.logged = []
@@ -89,9 +92,10 @@ def test_unknown_custom_tool_is_returned_to_client_for_execution() -> None:
         app.dependency_overrides.clear()
 
     data = resp.json()
+    ChatCompletion.model_validate(data)
     assert resp.status_code == 200
     assert data["choices"][0]["finish_reason"] == "tool_calls"
-    assert data["choices"][0]["message"]["content"] == ""
+    assert data["choices"][0]["message"]["content"] is None
     assert data["choices"][0]["message"]["tool_calls"] == [
         {
             "id": "call_1",
@@ -261,7 +265,10 @@ def test_web_search_bridge_surfaces_citations_and_legacy_steps() -> None:
     data = resp.json()
     assert resp.status_code == 200
     assert adapter.calls[0]["tools"] == [{"type": "web_search"}]
-    assert adapter.calls[0]["include"] == ["web_search_call.action.sources"]
+    assert adapter.calls[0]["include"] == [
+        "web_search_call.action.sources",
+        "reasoning.encrypted_content",
+    ]
     assert data["choices"][0]["message"]["content"] == "晴れです"
     assert data["x_openai"]["citations"] == [
         {"url": "https://example.com/weather", "title": "Weather Source"},
@@ -309,7 +316,6 @@ def test_stream_returns_chunks_and_done() -> None:
         app.dependency_overrides.clear()
 
     assert resp.status_code == 200
-    body = body.replace("\\n", "\n")
     events = [line[len("data: ") :] for line in body.splitlines() if line.startswith("data: ")]
     assert events[-1] == "[DONE]"
     first_payload = json.loads(events[0])
@@ -377,7 +383,7 @@ def test_stream_tool_call_finishes_with_tool_calls() -> None:
         app.dependency_overrides.clear()
 
     assert resp.status_code == 200
-    events = [line[len("data: ") :] for line in body.replace("\\n", "\n").splitlines() if line.startswith("data: ")]
+    events = [line[len("data: ") :] for line in body.splitlines() if line.startswith("data: ")]
     final_payload = json.loads(events[-2])
     assert final_payload["choices"][0]["finish_reason"] == "tool_calls"
 
@@ -406,53 +412,81 @@ def test_real_openai_api_custom_tool_roundtrip() -> None:
     )
     client = _override_service(service)
 
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "lookup_order_status",
+                "description": "Return the shipment status for an order id.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "order_id": {
+                            "type": "string",
+                            "description": "Order identifier such as ord_314",
+                        }
+                    },
+                    "required": ["order_id"],
+                },
+            },
+        }
+    ]
+    user_message = {
+        "role": "user",
+        "content": (
+            "lookup_order_status を必ず1回だけ使って order_id ord_314 を確認し、"
+            "最終回答は tracking_code と status を短く返してください。"
+        ),
+    }
+
     try:
-        resp = client.post(
+        first = client.post(
             "/v1/chat/completions",
             json={
                 "model": settings.openai_model_default,
+                "reasoning_effort": "medium",
                 "tool_choice": {
                     "type": "function",
                     "function": {"name": "lookup_order_status"},
                 },
-                "temperature": 0,
+                "messages": [user_message],
+                "tools": tools,
+            },
+        )
+        first_data = first.json()
+        tool_call = first_data["choices"][0]["message"]["tool_calls"][0]
+        args = json.loads(tool_call["function"]["arguments"])
+        tool_result = lookup_order_status(args["order_id"])
+
+        second = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": settings.openai_model_default,
+                "reasoning_effort": "medium",
+                "tool_choice": "auto",
                 "messages": [
+                    user_message,
+                    first_data["choices"][0]["message"],
                     {
-                        "role": "user",
-                        "content": (
-                            "lookup_order_status を必ず1回だけ使って order_id ord_314 を確認し、"
-                            "最終回答は tracking_code と status を短く返してください。"
-                        ),
-                    }
+                        "role": "tool",
+                        "tool_call_id": tool_call["id"],
+                        "content": json.dumps(tool_result),
+                    },
                 ],
-                "tools": [
-                    {
-                        "type": "function",
-                        "function": {
-                            "name": "lookup_order_status",
-                            "description": "Return the shipment status for an order id.",
-                            "parameters": {
-                                "type": "object",
-                                "properties": {
-                                    "order_id": {
-                                        "type": "string",
-                                        "description": "Order identifier such as ord_314",
-                                    }
-                                },
-                                "required": ["order_id"],
-                            },
-                        },
-                    }
-                ],
+                "tools": tools,
             },
         )
     finally:
         app.dependency_overrides.clear()
 
-    data = resp.json()
-    tool_calls = data["choices"][0]["message"]["tool_calls"]
-
-    assert resp.status_code == 200, data
-    assert observed_calls == []
-    assert data["choices"][0]["finish_reason"] == "tool_calls"
-    assert tool_calls[0]["function"]["name"] == "lookup_order_status"
+    second_data = second.json()
+    assert first.status_code == 200, first_data
+    assert first_data["choices"][0]["finish_reason"] == "tool_calls"
+    assert tool_call["function"]["name"] == "lookup_order_status"
+    assert first_data["choices"][0]["message"]["x_openai"]["response_items"]
+    assert observed_calls == [("lookup_order_status", "ord_314")]
+    assert second.status_code == 200, second_data
+    assert second_data["choices"][0]["finish_reason"] == "stop"
+    content = second_data["choices"][0]["message"]["content"]
+    assert "ZX-31415" in content
+    assert "shipped" in content.lower()

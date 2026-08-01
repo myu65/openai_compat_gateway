@@ -29,6 +29,12 @@ def to_responses_input(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for m in messages:
         role = m["role"]
         tool_calls = m.get("tool_calls") or []
+        state = m.get("x_openai") or {}
+        response_items = state.get("response_items") if isinstance(state, dict) else None
+
+        if role == "assistant" and response_items:
+            out.extend(response_items)
+            continue
 
         if role == "assistant" and tool_calls:
             content = _normalize_message_content(m.get("content"))
@@ -69,14 +75,16 @@ def to_responses_input(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def to_responses_custom_tools(custom_tools: list[ToolSpec] | None) -> list[dict[str, Any]]:
     tools: list[dict[str, Any]] = []
     for t in custom_tools or []:
-        tools.append(
-            {
-                "type": "function",
-                "name": t.function.name,
-                "description": t.function.description or "",
-                "parameters": t.function.parameters or {"type": "object", "properties": {}},
-            }
-        )
+        tool = {
+            "type": "function",
+            "name": t.function.name,
+            "description": t.function.description or "",
+            "parameters": t.function.parameters or {"type": "object", "properties": {}},
+            # Chat Completions function tools are non-strict by default.
+            # Responses may attempt strict mode when this is omitted.
+            "strict": t.function.strict if t.function.strict is not None else False,
+        }
+        tools.append(tool)
     return tools
 
 
@@ -90,7 +98,12 @@ def merge_builtin_tools(tools: list[dict[str, Any]], builtin_cfg: BuiltinToolsCo
             cfg.update(builtin_cfg.file_search)
             merged.append(cfg)
         if builtin_cfg.code_interpreter:
-            merged.append({"type": "code_interpreter"})
+            if isinstance(builtin_cfg.code_interpreter, dict):
+                cfg = {"type": "code_interpreter", **builtin_cfg.code_interpreter}
+                cfg.setdefault("container", {"type": "auto"})
+            else:
+                cfg = {"type": "code_interpreter", "container": {"type": "auto"}}
+            merged.append(cfg)
     return merged
 
 
@@ -108,4 +121,19 @@ def build_include_list(
         include.append("file_search_call.results")
     if builtin_cfg and builtin_cfg.code_interpreter:
         include.append("code_interpreter_call.outputs")
+    # Required for stateless reasoning continuity with store=false.
+    include.append("reasoning.encrypted_content")
     return include
+
+
+def to_responses_text_config(response_format: dict[str, Any] | None, verbosity: str | None) -> dict[str, Any] | None:
+    text: dict[str, Any] = {}
+    if verbosity is not None:
+        text["verbosity"] = verbosity
+    if response_format:
+        fmt = dict(response_format)
+        if fmt.get("type") == "json_schema" and isinstance(fmt.get("json_schema"), dict):
+            schema = dict(fmt.pop("json_schema"))
+            fmt.update(schema)
+        text["format"] = fmt
+    return text or None

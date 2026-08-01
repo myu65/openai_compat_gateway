@@ -35,3 +35,7 @@ class NormalizedResponse(BaseModel):
     usage: dict[str, Any] | None = None
     legacy_steps: list[dict[str, Any]] = Field(default_factory=list)
     bridge_executions: list[BridgeExecution] = Field(default_factory=list)
+    response_items: list[dict[str, Any]] = Field(default_factory=list)
+    response_id: str | None = None
+    status: str | None = None
+    incomplete_details: dict[str, Any] | None = None
