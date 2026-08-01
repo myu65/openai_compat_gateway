@@ -1,0 +1,27 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "openai-compat-gateway-client"
+version = "0.1.0"
+description = "Lossless LangChain client for openai-compat-gateway"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "myu65" }]
+dependencies = [
+    "langchain-openai>=0.3.35,<=1.4.1",
+]
+
+[project.urls]
+Repository = "https://github.com/myu65/openai_compat_gateway"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/openai_compat_gateway_client"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

@@ -119,10 +119,27 @@ For streaming, capture `x_openai` from the final chunk and attach it to the pers
 
 ## LangChain
 
-Stock `langchain-openai` discards unknown Chat Completions fields while converting a response into `AIMessage`. Use the included subclass when reasoning or built-in-tool continuity matters:
+Stock `langchain-openai` discards unknown Chat Completions fields while converting a response into `AIMessage`. The standalone client package preserves those fields without installing this server, FastAPI, or uvicorn.
+
+PyPI publication is not required. Install the package directly from this monorepo (its current default branch is `master`):
+
+```bash
+uv add "openai-compat-gateway-client @ git+https://github.com/myu65/openai_compat_gateway.git@master#subdirectory=packages/client"
+```
+
+```bash
+pip install "openai-compat-gateway-client @ git+https://github.com/myu65/openai_compat_gateway.git@master#subdirectory=packages/client"
+```
+
+Using the default branch is convenient during development. For production, replace `master` with a release tag or a full commit SHA so dependency resolution is reproducible. If the repository's default branch is renamed to `main`, use `@main` instead.
+
+The client supports `langchain-openai>=0.3.35,<=1.4.1`. CI covers `0.3.35`, each `1.x` minor through `1.4.1`, and both Python 3.11 and 3.13 at the supported boundaries. The upper bound is intentional because the client overrides private `ChatOpenAI` methods; raise it only together with the private-API contract and round-trip tests.
+
+### Configuration and invoke
 
 ```python
-from app.integrations.langchain import ChatOpenAICompat
+from langchain_core.messages import HumanMessage
+from openai_compat_gateway_client import ChatOpenAICompat
 
 llm = ChatOpenAICompat(
     model="gpt-5.6-terra",
@@ -130,9 +147,101 @@ llm = ChatOpenAICompat(
     api_key="YOUR_GATEWAY_API_KEY",
     reasoning_effort="medium",
 )
+
+answer = llm.invoke([HumanMessage(content="Explain the result briefly.")])
+print(answer.content)
 ```
 
-`ChatOpenAICompat` stores the gateway state in `AIMessage.additional_kwargs["x_openai"]` and sends it back with that assistant message on later turns. Custom tools remain normal LangChain tools: the gateway returns `message.tool_calls`, LangChain executes them, and the next request supplies `role="tool"` output.
+The client's `api_key` is `GATEWAY_API_KEY`, not the upstream OpenAI API key. `OPENAI_API_KEY` belongs only on the gateway server and must not be shipped to or persisted by the application.
+
+`ChatOpenAICompat` stores encrypted reasoning and other Responses items in `AIMessage.additional_kwargs["x_openai"]`, then restores that state on the corresponding assistant message in later requests.
+
+### Two-turn custom tool loop
+
+Custom tools remain normal LangChain tools. `bind_tools` exposes their schemas; the application executes each returned call and appends a `ToolMessage` before asking for the final answer:
+
+```python
+import json
+
+from langchain_core.messages import HumanMessage, ToolMessage
+from langchain_core.tools import tool
+
+
+@tool
+def lookup_order(order_id: str) -> dict[str, str]:
+    """Look up an order by id."""
+    return {"order_id": order_id, "status": "shipped", "tracking_code": "ZX-31415"}
+
+
+tool_llm = llm.bind_tools([lookup_order])
+messages = [HumanMessage(content="Check order ord_314, then report its status.")]
+
+assistant = tool_llm.invoke(messages)
+messages.append(assistant)  # includes tool_calls and additional_kwargs["x_openai"]
+
+for call in assistant.tool_calls:
+    result = lookup_order.invoke(call["args"])
+    messages.append(
+        ToolMessage(
+            content=json.dumps(result),
+            tool_call_id=call["id"],
+        )
+    )
+
+final = tool_llm.invoke(messages)
+print(final.content)
+```
+
+This exact assistant message must remain before its matching `ToolMessage`. Its `x_openai.response_items` contains the reasoning item and upstream function-call state required for the second turn.
+
+### Built-in tools
+
+OpenAI built-ins execute inside the gateway's Responses path. Pass their configuration through `extra_body`:
+
+```python
+web_llm = ChatOpenAICompat(
+    model="gpt-5.6-terra",
+    base_url="http://localhost:8000/v1",
+    api_key="YOUR_GATEWAY_API_KEY",
+    extra_body={"x_builtin_tools": {"web_search": True}},
+)
+
+answer = web_llm.invoke("Find the latest official release notes.")
+```
+
+### Persisting messages
+
+Do not reduce an `AIMessage` to only `role` and `content`. A database representation must also preserve `additional_kwargs` (including `x_openai`) and `tool_calls`. LangChain's serializer keeps the complete message shape:
+
+```python
+import json
+
+from langchain_core.messages import message_to_dict, messages_from_dict
+
+stored_json = json.dumps(message_to_dict(assistant))
+restored_assistant = messages_from_dict([json.loads(stored_json)])[0]
+```
+
+If an application uses its own columns, store at least `role`/message type, `content`, `additional_kwargs`, and `tool_calls`, then reconstruct the full `AIMessage`. LangGraph checkpointers that persist the complete LangChain message retain the state automatically.
+
+### Streaming
+
+The gateway emits `x_openai` on the final stream chunk. Aggregate every chunk before converting it to the assistant message that is stored and replayed:
+
+```python
+from langchain_core.messages import HumanMessage, message_chunk_to_message
+
+chunks = iter(llm.stream([HumanMessage(content="Think through this problem.")]))
+combined = next(chunks)
+for chunk in chunks:
+    print(chunk.content, end="", flush=True)
+    combined += chunk
+
+assistant = message_chunk_to_message(combined)
+assert "x_openai" in assistant.additional_kwargs
+```
+
+Persist `assistant` exactly as described above. Supplying it in the next transcript resends the streaming final state at the correct assistant position.
 
 ## Built-in tool bridge
 
@@ -154,6 +263,13 @@ For older clients, function names `web_search`, `search_web`, `browser_search`, 
 
 ```bash
 ./scripts/test-fast.sh
+```
+
+Build the client wheel, inspect its metadata and contents, install it into a clean environment, and verify its public import with:
+
+```bash
+./scripts/test-client-wheel.sh 3.11
+./scripts/test-client-wheel.sh 3.13
 ```
 
 Real OpenAI tests are opt-in and never read a key from command-line arguments:
