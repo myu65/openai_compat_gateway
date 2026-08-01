@@ -10,6 +10,16 @@ from langchain_core.messages import AIMessage
 from langchain_openai import ChatOpenAI
 
 
+def _merge_state(*states: Any) -> dict[str, Any] | None:
+    """Merge top-level observability data with per-message replay state."""
+
+    merged: dict[str, Any] = {}
+    for state in states:
+        if isinstance(state, Mapping):
+            merged.update(state)
+    return merged or None
+
+
 def _validate_private_api() -> None:
     """Fail clearly if an unsupported LangChain private API is forced in."""
 
@@ -61,10 +71,12 @@ class ChatOpenAICompat(ChatOpenAI):
 
     def _create_chat_result(self, response: Any, generation_info: dict | None = None):
         response_dict = response if isinstance(response, Mapping) else response.model_dump(warnings=False)
-        state = response_dict.get("x_openai")
+        top_level_state = response_dict.get("x_openai")
+        message_state = None
         choices = response_dict.get("choices") or []
         if choices:
-            state = choices[0].get("message", {}).get("x_openai") or state
+            message_state = choices[0].get("message", {}).get("x_openai")
+        state = _merge_state(top_level_state, message_state)
         result = super()._create_chat_result(response, generation_info=generation_info)
         if state and result.generations:
             result.generations[0].message.additional_kwargs["x_openai"] = state
@@ -83,10 +95,12 @@ class ChatOpenAICompat(ChatOpenAI):
         )
         if generation is None:
             return None
-        state = chunk.get("x_openai")
+        top_level_state = chunk.get("x_openai")
+        delta_state = None
         choices = chunk.get("choices") or []
         if choices:
-            state = choices[0].get("delta", {}).get("x_openai") or state
+            delta_state = choices[0].get("delta", {}).get("x_openai")
+        state = _merge_state(top_level_state, delta_state)
         if state:
             generation.message.additional_kwargs["x_openai"] = state
         return generation

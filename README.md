@@ -278,7 +278,16 @@ Real OpenAI tests are opt-in and never read a key from command-line arguments:
 OPENAI_API_KEY=... RUN_OPENAI_E2E=1 ./scripts/test-e2e.sh
 ```
 
-The suite covers request mapping, encrypted reasoning replay, custom tool round-trips, parallel streaming calls, real SSE framing, built-in tools, native/Responses routing, and LangChain state preservation.
+The manual `OpenAI E2E` workflow uses the protected `openai-e2e` Environment. It exercises the local gateway HTTP endpoint against the real Responses API and covers:
+
+- a Web Search result persisted through LangChain's JSON message serializer, replayed at the original assistant position, and then used to produce a custom LangChain tool call;
+- a mixed transcript containing built-in state, a custom function call, and an application `ToolMessage`, with both results used in the final turn;
+- streaming Code Interpreter output containing a hidden random value, followed by a restored second turn that computes the value's SHA-256;
+- direct structural assertions on the second upstream Responses input, using only item types, IDs, and SHA-256 fingerprints so prompts, tool output, and encrypted reasoning are not logged.
+
+For `store=false`, `x_openai.response_items` is the replay-critical field and must be kept on its original assistant message. Persist the complete `additional_kwargs["x_openai"]`, not only `response_items`: citations, sources, built-in events, Code Interpreter outputs, response status, and encrypted reasoning are useful for display, audit, and future-compatible replay. Custom-tool assistants must also retain `tool_calls`, and each matching `ToolMessage` must retain its `tool_call_id` and content.
+
+The full suite also covers request mapping, parallel streaming calls, real SSE framing, native/Responses routing, wheel installation, and the supported `langchain-openai` compatibility range.
 
 ## Data handling
 
