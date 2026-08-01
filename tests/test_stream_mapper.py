@@ -91,6 +91,37 @@ class StreamMapperTests(unittest.TestCase):
         final_payload = json.loads(chunks[-2][len("data: ") :].strip())
         self.assertEqual(final_payload["choices"][0]["finish_reason"], "tool_calls")
 
+    def test_stream_preserves_code_interpreter_outputs_in_top_level_state(self) -> None:
+        events = [
+            SimpleNamespace(
+                type="response.output_item.done",
+                item=SimpleNamespace(
+                    type="code_interpreter_call",
+                    id="ci_123",
+                    status="completed",
+                    outputs=[SimpleNamespace(type="logs", logs="STATE_NONCE:fake-value")],
+                ),
+            ),
+            SimpleNamespace(type="response.completed"),
+        ]
+
+        chunks = list(map_stream_events(events, "gpt-5.6-luna"))
+
+        final_payload = json.loads(chunks[-2][len("data: ") :].strip())
+        self.assertEqual(
+            final_payload["x_openai"]["code_interpreter_outputs"],
+            [
+                {
+                    "type": "logs",
+                    "data": {"type": "logs", "logs": "STATE_NONCE:fake-value"},
+                }
+            ],
+        )
+        self.assertEqual(
+            final_payload["x_openai"]["response_items"][0]["outputs"],
+            [{"type": "logs", "logs": "STATE_NONCE:fake-value"}],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
