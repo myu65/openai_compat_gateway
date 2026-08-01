@@ -46,8 +46,9 @@ _load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 @dataclass(frozen=True)
 class Settings:
     openai_api_key: str | None = os.getenv("OPENAI_API_KEY")
-    openai_model_default: str = os.getenv("OPENAI_MODEL_DEFAULT", "gpt-5.4-mini")
+    openai_model_default: str = os.getenv("OPENAI_MODEL_DEFAULT", "gpt-5.6-luna")
     openai_include_web_search_results: bool = _parse_env_bool("OPENAI_INCLUDE_WEB_SEARCH_RESULTS", default=False)
+    gateway_api_key: str | None = os.getenv("GATEWAY_API_KEY")
 
 
 settings = Settings()

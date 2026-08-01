@@ -9,7 +9,10 @@ from app.schemas.compat import BuiltinToolsConfig
 class BuildIncludeListTests(unittest.TestCase):
     def test_web_search_defaults_to_sources_only(self) -> None:
         include = build_include_list(BuiltinToolsConfig(web_search=True))
-        self.assertEqual(include, ["web_search_call.action.sources"])
+        self.assertEqual(
+            include,
+            ["web_search_call.action.sources", "reasoning.encrypted_content"],
+        )
 
     def test_web_search_results_can_be_enabled(self) -> None:
         include = build_include_list(
@@ -18,7 +21,11 @@ class BuildIncludeListTests(unittest.TestCase):
         )
         self.assertEqual(
             include,
-            ["web_search_call.action.sources", "web_search_call.results"],
+            [
+                "web_search_call.action.sources",
+                "web_search_call.results",
+                "reasoning.encrypted_content",
+            ],
         )
 
     def test_other_builtin_includes_remain_enabled(self) -> None:
@@ -35,6 +42,7 @@ class BuildIncludeListTests(unittest.TestCase):
                 "web_search_call.action.sources",
                 "file_search_call.results",
                 "code_interpreter_call.outputs",
+                "reasoning.encrypted_content",
             ],
         )
 

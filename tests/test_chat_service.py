@@ -51,7 +51,7 @@ class ChatServiceTests(unittest.TestCase):
 
         self.assertEqual(
             adapter.calls[0]["include"],
-            ["web_search_call.action.sources"],
+            ["web_search_call.action.sources", "reasoning.encrypted_content"],
         )
 
     def test_nonstream_web_search_results_include_can_be_enabled(self) -> None:
@@ -68,7 +68,11 @@ class ChatServiceTests(unittest.TestCase):
 
         self.assertEqual(
             adapter.calls[0]["include"],
-            ["web_search_call.action.sources", "web_search_call.results"],
+            [
+                "web_search_call.action.sources",
+                "web_search_call.results",
+                "reasoning.encrypted_content",
+            ],
         )
 
     def test_stream_passes_safe_include_set(self) -> None:
@@ -96,6 +100,7 @@ class ChatServiceTests(unittest.TestCase):
                 "web_search_call.action.sources",
                 "file_search_call.results",
                 "code_interpreter_call.outputs",
+                "reasoning.encrypted_content",
             ],
         )
         self.assertTrue(adapter.calls[0]["stream"])
