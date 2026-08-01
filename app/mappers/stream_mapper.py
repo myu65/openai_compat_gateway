@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from app.mappers.legacy_log_mapper import to_legacy_log_steps
-from app.mappers.response_mapper import _jsonable, _normalize_usage
+from app.mappers.response_mapper import _jsonable, _normalize_usage, normalize_final_response
 from app.schemas.internal import BridgeExecution
 
 
@@ -219,6 +219,7 @@ def map_stream_events(
             response = getattr(event, "response", None)
             if response is not None and getattr(response, "output", None):
                 completed_items = list(response.output)
+            normalized = normalize_final_response(SimpleNamespace(output=completed_items))
             legacy_steps = to_legacy_log_steps(
                 SimpleNamespace(output=completed_items),
                 bridge_executions=bridge_executions,
@@ -249,6 +250,8 @@ def map_stream_events(
                     "x_openai": {
                         "citations": citations,
                         "builtin_tool_events": builtin_tool_events,
+                        "file_search_results": normalized.file_search_results,
+                        "code_interpreter_outputs": normalized.code_interpreter_outputs,
                         "legacy_steps": legacy_steps,
                         "assistant_text": _last_assistant_text(completed_items),
                         **state,

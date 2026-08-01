@@ -95,6 +95,22 @@ def test_nonstream_state_is_saved_and_resent() -> None:
     assert second.content == "continued"
 
 
+def test_nonstream_merges_observability_fields_with_message_replay_state() -> None:
+    top_level_state = {
+        "citations": [{"url": "https://example.test/source", "title": "Source"}],
+        "builtin_tool_events": [{"type": "web_search", "status": "completed"}],
+    }
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        response = _completion({"role": "assistant", "content": "first", "x_openai": STATE})
+        response["x_openai"] = top_level_state
+        return httpx.Response(200, json=response)
+
+    assistant = _llm(handler).invoke([HumanMessage(content="start")])
+
+    assert assistant.additional_kwargs["x_openai"] == {**top_level_state, **STATE}
+
+
 def test_bind_tools_two_turn_round_trip_and_serialization() -> None:
     requests: list[dict[str, Any]] = []
     state_with_call = {
@@ -235,3 +251,51 @@ def test_stream_state_is_saved_and_resent() -> None:
     assert assistant.additional_kwargs["x_openai"] == STATE
     llm.invoke([HumanMessage(content="start"), assistant, HumanMessage(content="continue")])
     assert requests[1]["messages"][1]["x_openai"] == STATE
+
+
+def test_stream_merges_observability_fields_with_final_delta_replay_state() -> None:
+    observability = {
+        "code_interpreter_outputs": [{"type": "logs", "data": {"logs": "redacted"}}],
+        "builtin_tool_events": [{"type": "code_interpreter", "status": "completed"}],
+    }
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        chunks = [
+            {
+                "id": "chatcmpl-stream",
+                "object": "chat.completion.chunk",
+                "created": 1,
+                "model": "gpt-5.6-terra",
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {"role": "assistant", "content": "done"},
+                        "finish_reason": None,
+                    }
+                ],
+            },
+            {
+                "id": "chatcmpl-stream",
+                "object": "chat.completion.chunk",
+                "created": 1,
+                "model": "gpt-5.6-terra",
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {"x_openai": STATE},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "x_openai": {**observability, **STATE},
+            },
+        ]
+        content = "".join(f"data: {json.dumps(chunk)}\n\n" for chunk in chunks) + "data: [DONE]\n\n"
+        return httpx.Response(200, text=content, headers={"content-type": "text/event-stream"})
+
+    stream = iter(_llm(handler).stream([HumanMessage(content="start")]))
+    combined = next(stream)
+    for chunk in stream:
+        combined += chunk
+    assistant = message_chunk_to_message(combined)
+
+    assert assistant.additional_kwargs["x_openai"] == {**observability, **STATE}
