@@ -286,3 +286,21 @@ def test_auto_mode_splits_native_and_responses_paths() -> None:
 
     assert svc.select_mode(plain) == "chat_completions"
     assert svc.select_mode(reasoned_tool) == "responses"
+
+
+def test_native_toolless_request_does_not_forward_default_tool_choice() -> None:
+    responses = CapturingAdapter()
+    native = NativeAdapter()
+    svc = service(responses, native)
+    req = ChatCompletionsRequest(messages=[ChatMessage(role="user", content="hello")])
+
+    assert req.tool_choice == "none"
+    assert svc.select_mode(req) == "chat_completions"
+
+    svc.run_native_nonstream(req)
+
+    payload, stream = native.calls[0]
+    assert stream is False
+    assert "tools" not in payload
+    assert "tool_choice" not in payload
+    assert responses.calls == []
