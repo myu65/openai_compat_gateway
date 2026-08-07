@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class OpenAIStateEnvelope(BaseModel):
@@ -59,7 +59,7 @@ class ChatCompletionsRequest(BaseModel):
     model: str | None = None
     messages: list[ChatMessage]
     tools: list[ToolSpec] | None = None
-    tool_choice: Any = "auto"
+    tool_choice: Any = "none"
     stream: bool = False
     stream_options: dict[str, Any] | None = None
     temperature: float | None = None
@@ -76,3 +76,20 @@ class ChatCompletionsRequest(BaseModel):
     metadata: dict[str, Any] | None = None
     x_builtin_tools: BuiltinToolsConfig | None = None
     x_openai: OpenAICompatConfig | None = None
+
+    @model_validator(mode="after")
+    def default_tool_choice_for_configured_tools(self) -> ChatCompletionsRequest:
+        if "tool_choice" in self.model_fields_set:
+            return self
+
+        has_builtin_tools = bool(
+            self.x_builtin_tools
+            and (
+                self.x_builtin_tools.web_search
+                or self.x_builtin_tools.file_search is not None
+                or self.x_builtin_tools.code_interpreter
+            )
+        )
+        if self.tools or has_builtin_tools:
+            self.tool_choice = "auto"
+        return self
