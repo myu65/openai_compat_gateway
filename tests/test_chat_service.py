@@ -38,6 +38,22 @@ class ChatServiceTests(unittest.TestCase):
             x_builtin_tools=builtin_tools,
         )
 
+    def test_no_tools_default_tool_choice_to_none(self) -> None:
+        adapter = CapturingAdapter()
+        service = ChatService(
+            adapter,
+            DummyToolExecutor(),
+            DummyAuditLogger(),
+            default_model="gpt-5.4-mini",
+        )
+
+        req = self._make_request()
+        service.run_nonstream(req)
+
+        self.assertEqual(req.tool_choice, "none")
+        self.assertEqual(adapter.calls[0]["tools"], [])
+        self.assertEqual(adapter.calls[0]["tool_choice"], "none")
+
     def test_nonstream_web_search_omits_results_include_by_default(self) -> None:
         adapter = CapturingAdapter()
         service = ChatService(
@@ -131,7 +147,17 @@ class ChatServiceTests(unittest.TestCase):
         normalized = service.run_nonstream(req)
 
         self.assertEqual(adapter.calls[0]["tools"], [{"type": "web_search"}])
+        self.assertEqual(adapter.calls[0]["tool_choice"], "auto")
         self.assertEqual(normalized.bridge_executions[0].display_tool_name, "search_web")
+
+    def test_explicit_none_is_preserved_when_tools_are_configured(self) -> None:
+        req = ChatCompletionsRequest(
+            messages=[ChatMessage(role="user", content="hello")],
+            tool_choice="none",
+            tools=[ToolSpec(type="function", function=FunctionSpec(name="echo_tool"))],
+        )
+
+        self.assertEqual(req.tool_choice, "none")
 
     def test_nonstream_client_tool_followup_replays_in_request_state(self) -> None:
         adapter = CapturingAdapter(

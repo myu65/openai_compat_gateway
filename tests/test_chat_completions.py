@@ -316,6 +316,8 @@ def test_stream_returns_chunks_and_done() -> None:
         app.dependency_overrides.clear()
 
     assert resp.status_code == 200
+    assert adapter.calls[0]["tools"] == []
+    assert adapter.calls[0]["tool_choice"] == "none"
     events = [line[len("data: ") :] for line in body.splitlines() if line.startswith("data: ")]
     assert events[-1] == "[DONE]"
     first_payload = json.loads(events[0])
@@ -386,6 +388,39 @@ def test_stream_tool_call_finishes_with_tool_calls() -> None:
     events = [line[len("data: ") :] for line in body.splitlines() if line.startswith("data: ")]
     final_payload = json.loads(events[-2])
     assert final_payload["choices"][0]["finish_reason"] == "tool_calls"
+
+
+@pytest.mark.e2e
+@pytest.mark.skipif(
+    not os.getenv("RUN_OPENAI_E2E") or not settings.openai_api_key,
+    reason="requires RUN_OPENAI_E2E=1 and OPENAI_API_KEY",
+)
+def test_real_openai_api_without_tools_defaults_tool_choice_to_none() -> None:
+    service = ChatService(
+        adapter=OpenAIResponsesAdapter(api_key=settings.openai_api_key),
+        tool_executor=NullToolExecutor(),
+        audit_logger=DummyAuditLogger(),
+        default_model=settings.openai_model_default,
+    )
+    client = _override_service(service)
+
+    try:
+        response = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": settings.openai_model_default,
+                "reasoning_effort": "medium",
+                "messages": [{"role": "user", "content": "Reply briefly with a greeting."}],
+            },
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    data = response.json()
+    assert response.status_code == 200, data
+    assert data["choices"][0]["finish_reason"] == "stop"
+    assert data["choices"][0]["message"]["content"]
+    assert not data["choices"][0]["message"].get("tool_calls")
 
 
 @pytest.mark.e2e
