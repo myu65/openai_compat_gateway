@@ -55,6 +55,8 @@ class ChatService:
         payload["model"] = req.model or self.default_model
         payload.pop("x_builtin_tools", None)
         payload.pop("x_openai", None)
+        if not req.tools:
+            payload.pop("tool_choice", None)
         for message in payload.get("messages", []):
             message.pop("x_openai", None)
         return payload
