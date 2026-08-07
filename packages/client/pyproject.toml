@@ -7,6 +7,7 @@ name = "openai-compat-gateway-client"
 version = "0.1.0"
 description = "Lossless LangChain client for openai-compat-gateway"
 readme = "README.md"
+license = "MIT"
 requires-python = ">=3.11"
 authors = [{ name = "myu65" }]
 dependencies = [
