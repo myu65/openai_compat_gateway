@@ -98,19 +98,27 @@ def _native_sse(stream: Iterable[Any]):
     yield "data: [DONE]\n\n"
 
 
+def _upstream_timeout_error() -> dict[str, Any]:
+    return {
+        "message": "Upstream OpenAI request timed out",
+        "type": "api_error",
+        "param": None,
+        "code": "upstream_timeout",
+    }
+
+
+def _timeout_safe_sse(stream: Iterable[str]):
+    """Finish an already-started SSE response cleanly if the upstream read times out."""
+    try:
+        yield from stream
+    except APITimeoutError:
+        yield f"data: {json.dumps({'error': _upstream_timeout_error()}, ensure_ascii=False)}\n\n"
+        yield "data: [DONE]\n\n"
+
+
 def _error_response(exc: Exception) -> JSONResponse:
     if isinstance(exc, APITimeoutError):
-        return JSONResponse(
-            {
-                "error": {
-                    "message": "Upstream OpenAI request timed out",
-                    "type": "api_error",
-                    "param": None,
-                    "code": "upstream_timeout",
-                }
-            },
-            status_code=504,
-        )
+        return JSONResponse({"error": _upstream_timeout_error()}, status_code=504)
 
     default_status = 400 if isinstance(exc, ValueError) else 500
     status_code = int(getattr(exc, "status_code", default_status) or default_status)
@@ -140,7 +148,7 @@ def chat_completions(
         if mode == "chat_completions":
             if req.stream:
                 return StreamingResponse(
-                    _native_sse(svc.run_native_stream(req)),
+                    _timeout_safe_sse(_native_sse(svc.run_native_stream(req))),
                     media_type="text/event-stream",
                     headers=SSE_HEADERS,
                 )
@@ -150,7 +158,11 @@ def chat_completions(
 
         if req.stream:
             stream = svc.run_stream(req)
-            return StreamingResponse(stream, media_type="text/event-stream", headers=SSE_HEADERS)
+            return StreamingResponse(
+                _timeout_safe_sse(stream),
+                media_type="text/event-stream",
+                headers=SSE_HEADERS,
+            )
 
         normalized = svc.run_nonstream(req)
     except Exception as exc:
