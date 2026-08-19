@@ -59,12 +59,12 @@ Optional environment variables:
 - `OPENAI_MAX_RETRIES`: OpenAI SDK retry count, default `0` so a request that already consumed the long LLM read timeout is not automatically repeated for another full timeout window;
 - `WEB_CONCURRENCY`: Uvicorn worker count for the production container, default `2`. Increase this when one slow upstream request should not consume too much of the gateway's total request capacity.
 
-The timeout policy deliberately separates short infrastructure waits from long model generation. Connection and pool waits fail quickly, while response reads allow up to 15 minutes by default. An upstream OpenAI timeout is returned by the gateway as HTTP `504` instead of leaving the request hanging indefinitely.
+The timeout policy deliberately separates short infrastructure waits from long model generation. Connection and pool waits fail quickly, while response reads allow up to 15 minutes by default. An upstream OpenAI timeout before an SSE response starts is returned as HTTP `504`. If the timeout occurs after streaming has already started, the gateway emits an OpenAI-shaped SSE error with code `upstream_timeout`, followed by `[DONE]`, so the connection closes cleanly instead of hanging indefinitely.
 
 For local development, the command above runs one Uvicorn process. The production container defaults to two workers and can be overridden without rebuilding the image, for example:
 
 ```bash
-WEB_CONCURRENCY=4 docker run --rm -p 8000:8000 --env-file .env openai-compat-gateway
+docker run --rm -p 8000:8000 --env-file .env -e WEB_CONCURRENCY=4 openai-compat-gateway
 ```
 
 Container build:
