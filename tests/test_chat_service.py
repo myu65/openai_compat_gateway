@@ -211,6 +211,33 @@ class ChatServiceTests(unittest.TestCase):
         )
         self.assertEqual(adapter.calls[0]["tool_choice"], "auto")
 
+    def test_tool_message_name_is_consumed_without_becoming_a_responses_message_field(self) -> None:
+        adapter = CapturingAdapter()
+        service = self._make_service(adapter)
+        req = ChatCompletionsRequest(
+            messages=[
+                ChatMessage(role="user", content="hello"),
+                ChatMessage(
+                    role="assistant",
+                    tool_calls=[
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {"name": "echo_tool", "arguments": "{}"},
+                        }
+                    ],
+                ),
+                ChatMessage(role="tool", name="echo_tool", tool_call_id="call_1", content="ok"),
+            ]
+        )
+
+        service.run_nonstream(req)
+
+        self.assertEqual(
+            adapter.calls[0]["input_payload"][-1],
+            {"type": "function_call_output", "call_id": "call_1", "output": "ok"},
+        )
+
     def test_chat_completions_function_tool_choice_is_normalized_for_responses_api(self) -> None:
         adapter = CapturingAdapter()
         service = self._make_service(adapter)
@@ -278,17 +305,69 @@ class ChatServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "does not support Chat Completions input_audio"):
             service.run_nonstream(req)
 
-    def test_metadata_is_preserved_in_responses_mode(self) -> None:
+    def test_shared_chat_and_responses_options_are_preserved(self) -> None:
         adapter = CapturingAdapter()
         service = self._make_service(adapter)
         req = ChatCompletionsRequest(
             messages=[ChatMessage(role="user", content="hello")],
             metadata={"trace_id": "trace_123"},
+            moderation={"model": "omni-moderation-latest"},
+            prompt_cache_key="customer-42",
+            prompt_cache_options={"ttl": "30m"},
+            prompt_cache_retention="24h",
+            safety_identifier="safe-user-hash",
+            user="legacy-user-id",
         )
 
         service.run_nonstream(req)
 
-        self.assertEqual(adapter.calls[0]["metadata"], {"trace_id": "trace_123"})
+        call = adapter.calls[0]
+        self.assertEqual(call["metadata"], {"trace_id": "trace_123"})
+        self.assertEqual(call["moderation"], {"model": "omni-moderation-latest"})
+        self.assertEqual(call["prompt_cache_key"], "customer-42")
+        self.assertEqual(call["prompt_cache_options"], {"ttl": "30m"})
+        self.assertEqual(call["prompt_cache_retention"], "24h")
+        self.assertEqual(call["safety_identifier"], "safe-user-hash")
+        self.assertEqual(call["user"], "legacy-user-id")
+
+    def test_unknown_request_parameter_fails_instead_of_being_dropped(self) -> None:
+        service = self._make_service()
+        req = ChatCompletionsRequest(
+            messages=[ChatMessage(role="user", content="hello")],
+            presence_penalty=1.0,
+        )
+
+        with self.assertRaisesRegex(ValueError, "presence_penalty"):
+            service.run_nonstream(req)
+
+    def test_unknown_message_field_fails_instead_of_being_dropped(self) -> None:
+        service = self._make_service()
+        req = ChatCompletionsRequest(
+            messages=[ChatMessage(role="user", content="hello", future_message_field="value")],
+        )
+
+        with self.assertRaisesRegex(ValueError, "future_message_field"):
+            service.run_nonstream(req)
+
+    def test_non_function_assistant_tool_call_fails_instead_of_being_malformed(self) -> None:
+        service = self._make_service()
+        req = ChatCompletionsRequest(
+            messages=[
+                ChatMessage(
+                    role="assistant",
+                    tool_calls=[
+                        {
+                            "id": "call_custom",
+                            "type": "custom",
+                            "custom": {"name": "shell", "input": "pwd"},
+                        }
+                    ],
+                )
+            ]
+        )
+
+        with self.assertRaisesRegex(ValueError, "non-function assistant tool_calls"):
+            service.run_nonstream(req)
 
     def test_message_name_fails_instead_of_being_forwarded_or_dropped(self) -> None:
         service = self._make_service()
