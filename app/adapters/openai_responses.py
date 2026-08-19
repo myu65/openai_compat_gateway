@@ -38,6 +38,14 @@ class OpenAIResponsesAdapter:
         text=None,
         parallel_tool_calls=None,
         service_tier=None,
+        metadata=None,
+        moderation=None,
+        prompt_cache_key=None,
+        prompt_cache_options=None,
+        prompt_cache_retention=None,
+        safety_identifier=None,
+        user=None,
+        stream_options=None,
         stream: bool = False,
     ):
         kwargs = {
@@ -46,24 +54,25 @@ class OpenAIResponsesAdapter:
             "store": False,
             "stream": stream,
         }
-        if tools:
-            kwargs["tools"] = tools
-        if tool_choice is not None:
-            kwargs["tool_choice"] = tool_choice
-        if temperature is not None:
-            kwargs["temperature"] = temperature
-        if include:
-            kwargs["include"] = include
-        if reasoning is not None:
-            kwargs["reasoning"] = reasoning
-        if max_output_tokens is not None:
-            kwargs["max_output_tokens"] = max_output_tokens
-        if top_p is not None:
-            kwargs["top_p"] = top_p
-        if text is not None:
-            kwargs["text"] = text
-        if parallel_tool_calls is not None:
-            kwargs["parallel_tool_calls"] = parallel_tool_calls
-        if service_tier is not None:
-            kwargs["service_tier"] = service_tier
+        optional = {
+            "tools": tools or None,
+            "tool_choice": tool_choice,
+            "temperature": temperature,
+            "include": include or None,
+            "reasoning": reasoning,
+            "max_output_tokens": max_output_tokens,
+            "top_p": top_p,
+            "text": text,
+            "parallel_tool_calls": parallel_tool_calls,
+            "service_tier": service_tier,
+            "metadata": metadata,
+            "moderation": moderation,
+            "prompt_cache_key": prompt_cache_key,
+            "prompt_cache_options": prompt_cache_options,
+            "prompt_cache_retention": prompt_cache_retention,
+            "safety_identifier": safety_identifier,
+            "user": user,
+            "stream_options": stream_options,
+        }
+        kwargs.update({key: value for key, value in optional.items() if value is not None})
         return self.client.responses.create(**kwargs)

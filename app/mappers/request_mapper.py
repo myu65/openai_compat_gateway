@@ -6,21 +6,178 @@ from typing import Any
 from app.schemas.compat import BuiltinToolsConfig, ToolSpec
 
 
+def _reject_unknown_non_null_fields(source: dict[str, Any], allowed: set[str], context: str) -> None:
+    unknown = sorted(key for key, value in source.items() if key not in allowed and value is not None)
+    if unknown:
+        raise ValueError(f"{context} contains unsupported fields: {', '.join(unknown)}")
+
+
+def _require_string(source: dict[str, Any], key: str, context: str) -> str:
+    value = source.get(key)
+    if not isinstance(value, str):
+        raise ValueError(f"{context} requires string field {key!r}")
+    return value
+
+
+def _copy_prompt_cache_breakpoint(source: dict[str, Any], target: dict[str, Any]) -> None:
+    breakpoint = source.get("prompt_cache_breakpoint")
+    if breakpoint is None:
+        return
+    if not isinstance(breakpoint, dict):
+        raise ValueError("Chat Completions prompt_cache_breakpoint must be an object")
+    _reject_unknown_non_null_fields(
+        breakpoint,
+        {"mode"},
+        "Chat Completions prompt_cache_breakpoint",
+    )
+    if breakpoint.get("mode") != "explicit":
+        raise ValueError("Chat Completions prompt_cache_breakpoint requires mode='explicit'")
+    target["prompt_cache_breakpoint"] = dict(breakpoint)
+
+
+def _to_responses_content_part(part: Any) -> dict[str, Any]:
+    if not isinstance(part, dict):
+        raise ValueError("Responses translation requires Chat Completions content parts to be objects")
+
+    part_type = part.get("type")
+
+    if part_type == "text":
+        _reject_unknown_non_null_fields(
+            part,
+            {"type", "text", "prompt_cache_breakpoint"},
+            "Chat Completions text content part",
+        )
+        target = {"type": "input_text", "text": _require_string(part, "text", "Chat Completions text content part")}
+        _copy_prompt_cache_breakpoint(part, target)
+        return target
+
+    if part_type == "image_url":
+        _reject_unknown_non_null_fields(
+            part,
+            {"type", "image_url", "prompt_cache_breakpoint"},
+            "Chat Completions image_url content part",
+        )
+        image = part.get("image_url")
+        if isinstance(image, str):
+            # Retain the gateway's existing defensive compatibility for clients
+            # that flatten image_url to a string instead of the documented object.
+            image_url = image
+            detail = None
+        elif isinstance(image, dict):
+            _reject_unknown_non_null_fields(
+                image,
+                {"url", "detail"},
+                "Chat Completions image_url object",
+            )
+            image_url = _require_string(image, "url", "Chat Completions image_url object")
+            detail = image.get("detail")
+        else:
+            raise ValueError("Chat Completions image_url content must contain an image URL object")
+
+        if not image_url:
+            raise ValueError("Chat Completions image_url content must contain image_url.url")
+
+        target = {"type": "input_image", "image_url": image_url}
+        if detail is not None:
+            target["detail"] = detail
+        _copy_prompt_cache_breakpoint(part, target)
+        return target
+
+    if part_type == "file":
+        _reject_unknown_non_null_fields(
+            part,
+            {"type", "file", "prompt_cache_breakpoint"},
+            "Chat Completions file content part",
+        )
+        file_spec = part.get("file")
+        if not isinstance(file_spec, dict):
+            raise ValueError("Chat Completions file content must contain a file object")
+        _reject_unknown_non_null_fields(
+            file_spec,
+            {"file_data", "file_id", "filename"},
+            "Chat Completions file object",
+        )
+
+        target: dict[str, Any] = {"type": "input_file"}
+        for key in ("file_data", "file_id", "filename"):
+            if file_spec.get(key) is not None:
+                target[key] = file_spec[key]
+        _copy_prompt_cache_breakpoint(part, target)
+        return target
+
+    if part_type == "input_audio":
+        raise ValueError(
+            "Responses translation does not support Chat Completions input_audio message content; "
+            "use x_openai.mode='chat_completions'"
+        )
+
+    # Allow callers using the gateway's permissive schema to provide native
+    # Responses content parts directly. These are already in the target shape and
+    # are forwarded intact, so future fields are not silently discarded here.
+    if part_type in {"input_text", "input_image", "input_file"}:
+        return dict(part)
+
+    # Chat Completions can replay an assistant refusal as a typed content part,
+    # while Responses input messages have no refusal input-part type. Preserve
+    # the visible conversational content as text rather than forwarding an
+    # invalid Chat-only shape.
+    if part_type == "refusal":
+        _reject_unknown_non_null_fields(
+            part,
+            {"type", "refusal"},
+            "Chat Completions refusal content part",
+        )
+        refusal = _require_string(part, "refusal", "Chat Completions refusal content part")
+        return {"type": "input_text", "text": refusal}
+
+    raise ValueError(f"Unsupported Chat Completions content part for Responses translation: {part_type!r}")
+
+
 def _normalize_message_content(content: Any) -> Any:
-    if content is None:
-        return ""
-    if isinstance(content, (str, list)):
-        return content
-    if isinstance(content, dict):
-        return content
-    return str(content)
-
-
-def _normalize_tool_output(content: Any) -> str:
     if content is None:
         return ""
     if isinstance(content, str):
         return content
+    if isinstance(content, list):
+        return [_to_responses_content_part(part) for part in content]
+    if isinstance(content, dict):
+        return [_to_responses_content_part(content)]
+    return str(content)
+
+
+def _normalize_message_content_with_refusal(message: dict[str, Any]) -> Any:
+    content = message.get("content")
+    refusal = message.get("refusal") if message.get("role") == "assistant" else None
+    if refusal is None:
+        return _normalize_message_content(content)
+    if not isinstance(refusal, str):
+        raise ValueError("Chat Completions assistant refusal must be a string")
+
+    refusal_part = {"type": "refusal", "refusal": refusal}
+    if content in (None, "", []):
+        return _normalize_message_content([refusal_part])
+    if isinstance(content, list):
+        parts = list(content)
+        if not any(isinstance(part, dict) and part.get("type") == "refusal" for part in parts):
+            parts.append(refusal_part)
+        return _normalize_message_content(parts)
+    if isinstance(content, dict):
+        parts = [content]
+        if content.get("type") != "refusal":
+            parts.append(refusal_part)
+        return _normalize_message_content(parts)
+    if isinstance(content, str):
+        return _normalize_message_content([{"type": "text", "text": content}, refusal_part])
+    return _normalize_message_content(content)
+
+
+def _normalize_tool_output(content: Any) -> Any:
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return [_to_responses_content_part(part) for part in content]
     return json.dumps(content, ensure_ascii=False)
 
 
@@ -37,7 +194,7 @@ def to_responses_input(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
             continue
 
         if role == "assistant" and tool_calls:
-            content = _normalize_message_content(m.get("content"))
+            content = _normalize_message_content_with_refusal(m)
             if content not in ("", [], None):
                 out.append({"role": "assistant", "content": content})
 
@@ -63,12 +220,7 @@ def to_responses_input(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
             )
             continue
 
-        item: dict[str, Any] = {"role": role, "content": _normalize_message_content(m.get("content"))}
-        if m.get("name"):
-            item["name"] = m["name"]
-        if m.get("tool_call_id"):
-            item["tool_call_id"] = m["tool_call_id"]
-        out.append(item)
+        out.append({"role": role, "content": _normalize_message_content_with_refusal(m)})
     return out
 
 
