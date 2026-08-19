@@ -86,12 +86,34 @@ class ChatService:
             conflicts.append("stop")
         if any(message.role == "function" for message in req.messages):
             conflicts.append("legacy role=function messages")
-        if any(message.name is not None for message in req.messages):
+        if any(message.name is not None and message.role != "tool" for message in req.messages):
             conflicts.append("message.name")
         if any(getattr(message, "function_call", None) is not None for message in req.messages):
             conflicts.append("legacy assistant function_call")
         if any(getattr(message, "audio", None) is not None for message in req.messages):
             conflicts.append("assistant audio state")
+
+        request_extras = sorted(key for key, value in (req.model_extra or {}).items() if value is not None)
+        if request_extras:
+            conflicts.append(f"unsupported Chat Completions parameters: {', '.join(request_extras)}")
+
+        allowed_message_extras = {"audio", "function_call", "refusal"}
+        message_extras: set[str] = set()
+        has_non_function_tool_call = False
+        for message in req.messages:
+            message_extras.update(
+                key
+                for key, value in (message.model_extra or {}).items()
+                if value is not None and key not in allowed_message_extras
+            )
+            for tool_call in message.tool_calls or []:
+                if tool_call.get("type", "function") != "function":
+                    has_non_function_tool_call = True
+        if message_extras:
+            conflicts.append(f"unsupported Chat Completions message fields: {', '.join(sorted(message_extras))}")
+        if has_non_function_tool_call:
+            conflicts.append("non-function assistant tool_calls")
+
         if conflicts:
             joined = ", ".join(conflicts)
             raise ValueError(f"Responses translation cannot preserve {joined}; use x_openai.mode='chat_completions'")
@@ -256,6 +278,24 @@ class ChatService:
 
         return model, input_payload, merged_tools, include, bridge_requests
 
+    def _shared_responses_kwargs(self, req) -> dict[str, Any]:
+        return {
+            "temperature": req.temperature,
+            "top_p": req.top_p,
+            "reasoning": {"effort": req.reasoning_effort} if req.reasoning_effort is not None else None,
+            "max_output_tokens": req.max_completion_tokens or req.max_tokens,
+            "text": to_responses_text_config(req.response_format, req.verbosity),
+            "parallel_tool_calls": req.parallel_tool_calls,
+            "service_tier": req.service_tier,
+            "metadata": req.metadata,
+            "moderation": req.moderation,
+            "prompt_cache_key": req.prompt_cache_key,
+            "prompt_cache_options": req.prompt_cache_options,
+            "prompt_cache_retention": req.prompt_cache_retention,
+            "safety_identifier": req.safety_identifier,
+            "user": req.user,
+        }
+
     def run_nonstream(self, req):
         model, input_payload, tools, include, bridge_requests = self._prepare_request(req)
         initial_tool_choice = self._normalize_tool_choice(req.tool_choice)
@@ -264,16 +304,9 @@ class ChatService:
             input_payload=input_payload,
             tools=tools,
             tool_choice=initial_tool_choice,
-            temperature=req.temperature,
-            top_p=req.top_p,
-            reasoning={"effort": req.reasoning_effort} if req.reasoning_effort is not None else None,
-            max_output_tokens=req.max_completion_tokens or req.max_tokens,
-            text=to_responses_text_config(req.response_format, req.verbosity),
-            parallel_tool_calls=req.parallel_tool_calls,
-            service_tier=req.service_tier,
-            metadata=req.metadata,
             include=include,
             stream=False,
+            **self._shared_responses_kwargs(req),
         )
 
         normalized = normalize_final_response(resp, bridge_executions=bridge_requests)
@@ -287,16 +320,9 @@ class ChatService:
             input_payload=input_payload,
             tools=tools,
             tool_choice=self._normalize_tool_choice(req.tool_choice),
-            temperature=req.temperature,
-            top_p=req.top_p,
-            reasoning={"effort": req.reasoning_effort} if req.reasoning_effort is not None else None,
-            max_output_tokens=req.max_completion_tokens or req.max_tokens,
-            text=to_responses_text_config(req.response_format, req.verbosity),
-            parallel_tool_calls=req.parallel_tool_calls,
-            service_tier=req.service_tier,
-            metadata=req.metadata,
             include=include,
             stream=True,
+            **self._shared_responses_kwargs(req),
         )
         return map_stream_events(
             openai_stream,
