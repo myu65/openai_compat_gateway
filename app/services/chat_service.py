@@ -34,6 +34,14 @@ class ChatService:
         self.include_web_search_results = include_web_search_results
         self.native_adapter = native_adapter
 
+    def _has_audio_input(self, req) -> bool:
+        for message in req.messages:
+            if not isinstance(message.content, list):
+                continue
+            if any(isinstance(part, dict) and part.get("type") == "input_audio" for part in message.content):
+                return True
+        return False
+
     def select_mode(self, req) -> str:
         requested = req.x_openai.mode if req.x_openai else "auto"
         if requested != "auto":
@@ -46,7 +54,10 @@ class ChatService:
             bool(message.x_openai and message.x_openai.response_items) for message in req.messages
         )
         has_bridge = any(find_bridge_for_tool_name(tool.function.name) for tool in (req.tools or []))
-        if req.x_builtin_tools or has_state or has_bridge or (req.reasoning_effort is not None and req.tools):
+        requires_responses = bool(req.x_builtin_tools or has_state or has_bridge)
+        if self._has_audio_input(req) and not requires_responses:
+            return "chat_completions"
+        if requires_responses or (req.reasoning_effort is not None and req.tools):
             return "responses"
         return "chat_completions"
 
