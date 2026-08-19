@@ -74,6 +74,16 @@ class ChatCompletionsRequest(BaseModel):
     n: int = 1
     stop: str | list[str] | None = None
     metadata: dict[str, Any] | None = None
+    moderation: dict[str, Any] | None = None
+    prompt_cache_key: str | None = None
+    prompt_cache_options: dict[str, Any] | None = None
+    prompt_cache_retention: str | None = None
+    safety_identifier: str | None = None
+    user: str | None = None
+    # The gateway is intentionally stateless and forces store=false upstream on
+    # both execution paths. Keep this field modeled so standard clients can send
+    # it without it being mistaken for an unhandled compatibility parameter.
+    store: bool | None = None
     x_builtin_tools: BuiltinToolsConfig | None = None
     x_openai: OpenAICompatConfig | None = None
 
