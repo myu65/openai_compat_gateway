@@ -125,6 +125,182 @@ class ToResponsesInputTests(unittest.TestCase):
             ],
         )
 
+    def test_chat_content_parts_are_translated_to_responses_shapes(self) -> None:
+        items = to_responses_input(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "この画像とファイルを見て",
+                            "prompt_cache_breakpoint": {"mode": "explicit"},
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": "data:image/png;base64,AAAA",
+                                "detail": "high",
+                            },
+                        },
+                        {
+                            "type": "file",
+                            "file": {
+                                "file_id": "file_123",
+                                "filename": "sample.pdf",
+                            },
+                        },
+                        {
+                            "type": "input_audio",
+                            "input_audio": {
+                                "data": "AAAA",
+                                "format": "wav",
+                            },
+                        },
+                    ],
+                }
+            ]
+        )
+
+        self.assertEqual(
+            items,
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": "この画像とファイルを見て",
+                            "prompt_cache_breakpoint": {"mode": "explicit"},
+                        },
+                        {
+                            "type": "input_image",
+                            "image_url": "data:image/png;base64,AAAA",
+                            "detail": "high",
+                        },
+                        {
+                            "type": "input_file",
+                            "file_id": "file_123",
+                            "filename": "sample.pdf",
+                        },
+                        {
+                            "type": "input_audio",
+                            "input_audio": {
+                                "data": "AAAA",
+                                "format": "wav",
+                            },
+                        },
+                    ],
+                }
+            ],
+        )
+
+    def test_image_url_string_is_accepted_defensively(self) -> None:
+        items = to_responses_input(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image_url",
+                            "image_url": "https://example.com/image.png",
+                        }
+                    ],
+                }
+            ]
+        )
+
+        self.assertEqual(
+            items,
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_image",
+                            "image_url": "https://example.com/image.png",
+                        }
+                    ],
+                }
+            ],
+        )
+
+    def test_tool_output_text_parts_are_translated_instead_of_json_encoded(self) -> None:
+        items = to_responses_input(
+            [
+                {
+                    "role": "tool",
+                    "tool_call_id": "call_1",
+                    "content": [
+                        {"type": "text", "text": "first"},
+                        {"type": "text", "text": "second"},
+                    ],
+                }
+            ]
+        )
+
+        self.assertEqual(
+            items,
+            [
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_1",
+                    "output": [
+                        {"type": "input_text", "text": "first"},
+                        {"type": "input_text", "text": "second"},
+                    ],
+                }
+            ],
+        )
+
+    def test_assistant_refusal_part_is_replayed_as_text(self) -> None:
+        items = to_responses_input(
+            [
+                {
+                    "role": "assistant",
+                    "content": [{"type": "refusal", "refusal": "できません"}],
+                }
+            ]
+        )
+
+        self.assertEqual(
+            items,
+            [
+                {
+                    "role": "assistant",
+                    "content": [{"type": "input_text", "text": "できません"}],
+                }
+            ],
+        )
+
+    def test_audio_prompt_cache_breakpoint_fails_clearly(self) -> None:
+        with self.assertRaisesRegex(ValueError, "prompt_cache_breakpoint on input_audio"):
+            to_responses_input(
+                [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "input_audio",
+                                "input_audio": {"data": "AAAA", "format": "mp3"},
+                                "prompt_cache_breakpoint": {"mode": "explicit"},
+                            }
+                        ],
+                    }
+                ]
+            )
+
+    def test_unknown_chat_content_part_fails_clearly(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Unsupported Chat Completions content part"):
+            to_responses_input(
+                [
+                    {
+                        "role": "user",
+                        "content": [{"type": "future_type", "value": "x"}],
+                    }
+                ]
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
