@@ -51,7 +51,21 @@ Optional environment variables:
 
 - `OPENAI_MODEL_DEFAULT`: defaults to `gpt-5.6-luna`;
 - `GATEWAY_API_KEY`: when set, clients must send this value as `Authorization: Bearer ...`;
-- `OPENAI_INCLUDE_WEB_SEARCH_RESULTS`: enables `web_search_call.results` only for projects that permit that include value.
+- `OPENAI_INCLUDE_WEB_SEARCH_RESULTS`: enables `web_search_call.results` only for projects that permit that include value;
+- `OPENAI_CONNECT_TIMEOUT_SECONDS`: upstream connection timeout, default `10` seconds;
+- `OPENAI_READ_TIMEOUT_SECONDS`: upstream response read timeout, default `900` seconds. This is intentionally long because LLM generation and reasoning can take several minutes;
+- `OPENAI_WRITE_TIMEOUT_SECONDS`: upstream request write timeout, default `30` seconds;
+- `OPENAI_POOL_TIMEOUT_SECONDS`: wait-for-connection-pool timeout, default `10` seconds;
+- `OPENAI_MAX_RETRIES`: OpenAI SDK retry count, default `0` so a request that already consumed the long LLM read timeout is not automatically repeated for another full timeout window;
+- `WEB_CONCURRENCY`: Uvicorn worker count for the production container, default `2`. Increase this when one slow upstream request should not consume too much of the gateway's total request capacity.
+
+The timeout policy deliberately separates short infrastructure waits from long model generation. Connection and pool waits fail quickly, while response reads allow up to 15 minutes by default. An upstream OpenAI timeout is returned by the gateway as HTTP `504` instead of leaving the request hanging indefinitely.
+
+For local development, the command above runs one Uvicorn process. The production container defaults to two workers and can be overridden without rebuilding the image, for example:
+
+```bash
+WEB_CONCURRENCY=4 docker run --rm -p 8000:8000 --env-file .env openai-compat-gateway
+```
 
 Container build:
 
@@ -121,17 +135,17 @@ For streaming, capture `x_openai` from the final chunk and attach it to the pers
 
 Stock `langchain-openai` discards unknown Chat Completions fields while converting a response into `AIMessage`. The standalone client package preserves those fields without installing this server, FastAPI, or uvicorn.
 
-PyPI publication is not required. Install the package directly from this monorepo (its current default branch is `master`):
+PyPI publication is not required. Install the package directly from this monorepo (its current default branch is `main`):
 
 ```bash
-uv add "openai-compat-gateway-client @ git+https://github.com/myu65/openai_compat_gateway.git@master#subdirectory=packages/client"
+uv add "openai-compat-gateway-client @ git+https://github.com/myu65/openai_compat_gateway.git@main#subdirectory=packages/client"
 ```
 
 ```bash
-pip install "openai-compat-gateway-client @ git+https://github.com/myu65/openai_compat_gateway.git@master#subdirectory=packages/client"
+pip install "openai-compat-gateway-client @ git+https://github.com/myu65/openai_compat_gateway.git@main#subdirectory=packages/client"
 ```
 
-Using the default branch is convenient during development. For production, replace `master` with a release tag or a full commit SHA so dependency resolution is reproducible. If the repository's default branch is renamed to `main`, use `@main` instead.
+Using the default branch is convenient during development. For production, replace `main` with a release tag or a full commit SHA so dependency resolution is reproducible.
 
 The client supports `langchain-openai>=0.3.35,<=1.4.1`. CI covers `0.3.35`, each `1.x` minor through `1.4.1`, and both Python 3.11 and 3.13 at the supported boundaries. The upper bound is intentional because the client overrides private `ChatOpenAI` methods; raise it only together with the private-API contract and round-trip tests.
 
