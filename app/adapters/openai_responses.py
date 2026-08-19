@@ -45,6 +45,7 @@ class OpenAIResponsesAdapter:
         prompt_cache_retention=None,
         safety_identifier=None,
         user=None,
+        stream_options=None,
         stream: bool = False,
     ):
         kwargs = {
@@ -71,6 +72,7 @@ class OpenAIResponsesAdapter:
             "prompt_cache_retention": prompt_cache_retention,
             "safety_identifier": safety_identifier,
             "user": user,
+            "stream_options": stream_options,
         }
         kwargs.update({key: value for key, value in optional.items() if value is not None})
         return self.client.responses.create(**kwargs)
