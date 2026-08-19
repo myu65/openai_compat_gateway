@@ -75,6 +75,12 @@ class ChatService:
             conflicts.append("stop")
         if any(message.role == "function" for message in req.messages):
             conflicts.append("legacy role=function messages")
+        if any(message.name is not None for message in req.messages):
+            conflicts.append("message.name")
+        if any(getattr(message, "function_call", None) is not None for message in req.messages):
+            conflicts.append("legacy assistant function_call")
+        if any(getattr(message, "audio", None) is not None for message in req.messages):
+            conflicts.append("assistant audio state")
         if conflicts:
             joined = ", ".join(conflicts)
             raise ValueError(f"Responses translation cannot preserve {joined}; use x_openai.mode='chat_completions'")
@@ -254,6 +260,7 @@ class ChatService:
             text=to_responses_text_config(req.response_format, req.verbosity),
             parallel_tool_calls=req.parallel_tool_calls,
             service_tier=req.service_tier,
+            metadata=req.metadata,
             include=include,
             stream=False,
         )
@@ -276,6 +283,7 @@ class ChatService:
             text=to_responses_text_config(req.response_format, req.verbosity),
             parallel_tool_calls=req.parallel_tool_calls,
             service_tier=req.service_tier,
+            metadata=req.metadata,
             include=include,
             stream=True,
         )
