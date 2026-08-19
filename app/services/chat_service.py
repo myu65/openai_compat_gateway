@@ -146,9 +146,7 @@ class ChatService:
                 if not isinstance(tool_call, dict):
                     malformed_tool_call = True
                     continue
-                tool_call_extras.update(
-                    self._unknown_non_null_keys(tool_call, {"id", "type", "function"})
-                )
+                tool_call_extras.update(self._unknown_non_null_keys(tool_call, {"id", "type", "function"}))
                 if tool_call.get("type", "function") != "function":
                     has_non_function_tool_call = True
                 function = tool_call.get("function")
@@ -157,9 +155,7 @@ class ChatService:
                 if not isinstance(function, dict):
                     malformed_tool_call = True
                     continue
-                tool_call_function_extras.update(
-                    self._unknown_non_null_keys(function, {"name", "arguments"})
-                )
+                tool_call_function_extras.update(self._unknown_non_null_keys(function, {"name", "arguments"}))
         if message_extras:
             conflicts.append(f"unsupported Chat Completions message fields: {', '.join(sorted(message_extras))}")
         if tool_call_extras:
