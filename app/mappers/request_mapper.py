@@ -6,21 +6,100 @@ from typing import Any
 from app.schemas.compat import BuiltinToolsConfig, ToolSpec
 
 
+def _copy_prompt_cache_breakpoint(source: dict[str, Any], target: dict[str, Any]) -> None:
+    breakpoint = source.get("prompt_cache_breakpoint")
+    if breakpoint is not None:
+        target["prompt_cache_breakpoint"] = breakpoint
+
+
+def _to_responses_content_part(part: Any) -> dict[str, Any]:
+    if not isinstance(part, dict):
+        raise ValueError("Responses translation requires Chat Completions content parts to be objects")
+
+    part_type = part.get("type")
+
+    if part_type == "text":
+        target = {"type": "input_text", "text": part.get("text", "")}
+        _copy_prompt_cache_breakpoint(part, target)
+        return target
+
+    if part_type == "image_url":
+        image = part.get("image_url")
+        if isinstance(image, str):
+            image_url = image
+            detail = None
+        elif isinstance(image, dict):
+            image_url = image.get("url")
+            detail = image.get("detail")
+        else:
+            raise ValueError("Chat Completions image_url content must contain an image URL object")
+
+        if not image_url:
+            raise ValueError("Chat Completions image_url content must contain image_url.url")
+
+        target = {"type": "input_image", "image_url": image_url}
+        if detail is not None:
+            target["detail"] = detail
+        _copy_prompt_cache_breakpoint(part, target)
+        return target
+
+    if part_type == "file":
+        file_spec = part.get("file")
+        if not isinstance(file_spec, dict):
+            raise ValueError("Chat Completions file content must contain a file object")
+
+        target: dict[str, Any] = {"type": "input_file"}
+        for key in ("file_data", "file_id", "file_url", "filename", "detail"):
+            if file_spec.get(key) is not None:
+                target[key] = file_spec[key]
+        _copy_prompt_cache_breakpoint(part, target)
+        return target
+
+    if part_type == "input_audio":
+        if part.get("prompt_cache_breakpoint") is not None:
+            raise ValueError(
+                "Responses translation cannot preserve prompt_cache_breakpoint on input_audio; "
+                "use x_openai.mode='chat_completions'"
+            )
+        input_audio = part.get("input_audio")
+        if not isinstance(input_audio, dict):
+            raise ValueError("Chat Completions input_audio content must contain an input_audio object")
+        return {"type": "input_audio", "input_audio": input_audio}
+
+    # Allow callers using the gateway's permissive schema to provide native
+    # Responses content parts directly. These are already in the target shape.
+    if part_type in {"input_text", "input_image", "input_file"}:
+        return dict(part)
+
+    # Chat Completions can replay an assistant refusal as a typed content part,
+    # while Responses input messages have no refusal input-part type. Preserve
+    # the visible conversational content as text rather than forwarding an
+    # invalid Chat-only shape.
+    if part_type == "refusal":
+        return {"type": "input_text", "text": part.get("refusal", "")}
+
+    raise ValueError(f"Unsupported Chat Completions content part for Responses translation: {part_type!r}")
+
+
 def _normalize_message_content(content: Any) -> Any:
-    if content is None:
-        return ""
-    if isinstance(content, (str, list)):
-        return content
-    if isinstance(content, dict):
-        return content
-    return str(content)
-
-
-def _normalize_tool_output(content: Any) -> str:
     if content is None:
         return ""
     if isinstance(content, str):
         return content
+    if isinstance(content, list):
+        return [_to_responses_content_part(part) for part in content]
+    if isinstance(content, dict):
+        return [_to_responses_content_part(content)]
+    return str(content)
+
+
+def _normalize_tool_output(content: Any) -> Any:
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return [_to_responses_content_part(part) for part in content]
     return json.dumps(content, ensure_ascii=False)
 
 
@@ -63,12 +142,7 @@ def to_responses_input(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
             )
             continue
 
-        item: dict[str, Any] = {"role": role, "content": _normalize_message_content(m.get("content"))}
-        if m.get("name"):
-            item["name"] = m["name"]
-        if m.get("tool_call_id"):
-            item["tool_call_id"] = m["tool_call_id"]
-        out.append(item)
+        out.append({"role": role, "content": _normalize_message_content(m.get("content"))})
     return out
 
 
