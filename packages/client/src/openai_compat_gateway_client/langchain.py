@@ -24,6 +24,7 @@ def _validate_private_api() -> None:
     """Fail clearly if an unsupported LangChain private API is forced in."""
 
     expected = {
+        "_use_responses_api": ["self", "payload"],
         "_get_request_payload": ["self", "input_", "stop", "kwargs"],
         "_create_chat_result": ["self", "response", "generation_info"],
         "_convert_chunk_to_generation_chunk": [
@@ -54,6 +55,17 @@ class ChatOpenAICompat(ChatOpenAI):
     subclass preserves ``x_openai`` in ``AIMessage.additional_kwargs`` and
     sends it back on the corresponding assistant message.
     """
+
+    def _use_responses_api(self, payload: dict) -> bool:
+        """Always use the gateway's Chat Completions compatibility endpoint.
+
+        Modern ``langchain-openai`` can automatically switch ``ChatOpenAI`` to
+        the Responses API for selected options. That would bypass the gateway's
+        ``/v1/chat/completions`` endpoint and its lossless ``x_openai`` bridge.
+        The gateway itself owns the Chat-vs-Responses upstream routing instead.
+        """
+
+        return False
 
     def _get_request_payload(
         self,
