@@ -97,6 +97,21 @@ class ChatService:
         if request_extras:
             conflicts.append(f"unsupported Chat Completions parameters: {', '.join(request_extras)}")
 
+        if req.x_builtin_tools:
+            builtin_extras = sorted(
+                key for key, value in (req.x_builtin_tools.model_extra or {}).items() if value is not None
+            )
+            if builtin_extras:
+                conflicts.append(f"unsupported x_builtin_tools fields: {', '.join(builtin_extras)}")
+
+        function_tool_extras: set[str] = set()
+        for tool in req.tools or []:
+            function_tool_extras.update(
+                key for key, value in (tool.function.model_extra or {}).items() if value is not None
+            )
+        if function_tool_extras:
+            conflicts.append(f"unsupported function tool fields: {', '.join(sorted(function_tool_extras))}")
+
         allowed_message_extras = {"audio", "function_call", "refusal"}
         message_extras: set[str] = set()
         has_non_function_tool_call = False
@@ -198,7 +213,11 @@ class ChatService:
                 encoded["tool_calls"] = [
                     tool_call for tool_call in message.tool_calls if tool_call.get("id") not in bridged_calls
                 ]
-                if encoded["tool_calls"] or encoded.get("content") not in (None, "", []):
+                if (
+                    encoded["tool_calls"]
+                    or encoded.get("content") not in (None, "", [])
+                    or encoded.get("refusal") is not None
+                ):
                     forwarded_messages.append(encoded)
                 continue
 
