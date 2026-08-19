@@ -9,6 +9,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
+from openai import APITimeoutError
 
 from app.adapters.openai_chat_completions import OpenAIChatCompletionsAdapter
 from app.adapters.openai_responses import OpenAIResponsesAdapter
@@ -46,11 +47,22 @@ def _sample_tool_registry():
 _service: ChatService | None = None
 
 
+def _openai_adapter_kwargs() -> dict[str, Any]:
+    return {
+        "api_key": settings.openai_api_key,
+        "connect_timeout_seconds": settings.openai_connect_timeout_seconds,
+        "read_timeout_seconds": settings.openai_read_timeout_seconds,
+        "write_timeout_seconds": settings.openai_write_timeout_seconds,
+        "pool_timeout_seconds": settings.openai_pool_timeout_seconds,
+        "max_retries": settings.openai_max_retries,
+    }
+
+
 def get_service() -> ChatService:
     global _service
     if _service is None:
-        adapter = OpenAIResponsesAdapter(api_key=settings.openai_api_key)
-        native_adapter = OpenAIChatCompletionsAdapter(api_key=settings.openai_api_key)
+        adapter = OpenAIResponsesAdapter(**_openai_adapter_kwargs())
+        native_adapter = OpenAIChatCompletionsAdapter(**_openai_adapter_kwargs())
         executor = ToolExecutor(_sample_tool_registry())
         audit = AuditLogger()
         _service = ChatService(
@@ -87,6 +99,19 @@ def _native_sse(stream: Iterable[Any]):
 
 
 def _error_response(exc: Exception) -> JSONResponse:
+    if isinstance(exc, APITimeoutError):
+        return JSONResponse(
+            {
+                "error": {
+                    "message": "Upstream OpenAI request timed out",
+                    "type": "api_error",
+                    "param": None,
+                    "code": "upstream_timeout",
+                }
+            },
+            status_code=504,
+        )
+
     default_status = 400 if isinstance(exc, ValueError) else 500
     status_code = int(getattr(exc, "status_code", default_status) or default_status)
     body = getattr(exc, "body", None)
