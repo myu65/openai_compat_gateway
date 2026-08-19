@@ -38,14 +38,17 @@ class ChatServiceTests(unittest.TestCase):
             x_builtin_tools=builtin_tools,
         )
 
-    def test_no_tools_default_tool_choice_to_none(self) -> None:
-        adapter = CapturingAdapter()
-        service = ChatService(
-            adapter,
+    def _make_service(self, adapter=None) -> ChatService:
+        return ChatService(
+            adapter or CapturingAdapter(),
             DummyToolExecutor(),
             DummyAuditLogger(),
             default_model="gpt-5.4-mini",
         )
+
+    def test_no_tools_default_tool_choice_to_none(self) -> None:
+        adapter = CapturingAdapter()
+        service = self._make_service(adapter)
 
         req = self._make_request()
         service.run_nonstream(req)
@@ -56,12 +59,7 @@ class ChatServiceTests(unittest.TestCase):
 
     def test_nonstream_web_search_omits_results_include_by_default(self) -> None:
         adapter = CapturingAdapter()
-        service = ChatService(
-            adapter,
-            DummyToolExecutor(),
-            DummyAuditLogger(),
-            default_model="gpt-5.4-mini",
-        )
+        service = self._make_service(adapter)
 
         service.run_nonstream(self._make_request(BuiltinToolsConfig(web_search=True)))
 
@@ -93,12 +91,7 @@ class ChatServiceTests(unittest.TestCase):
 
     def test_stream_passes_safe_include_set(self) -> None:
         adapter = CapturingAdapter()
-        service = ChatService(
-            adapter,
-            DummyToolExecutor(),
-            DummyAuditLogger(),
-            default_model="gpt-5.4-mini",
-        )
+        service = self._make_service(adapter)
 
         service.run_stream(
             self._make_request(
@@ -123,12 +116,7 @@ class ChatServiceTests(unittest.TestCase):
 
     def test_bridge_tool_definitions_enable_builtin_web_search(self) -> None:
         adapter = CapturingAdapter()
-        service = ChatService(
-            adapter,
-            DummyToolExecutor(),
-            DummyAuditLogger(),
-            default_model="gpt-5.4-mini",
-        )
+        service = self._make_service(adapter)
 
         req = ChatCompletionsRequest(
             messages=[ChatMessage(role="user", content="search for tokyo weather")],
@@ -173,12 +161,7 @@ class ChatServiceTests(unittest.TestCase):
                 ),
             ]
         )
-        service = ChatService(
-            adapter,
-            DummyToolExecutor(),
-            DummyAuditLogger(),
-            default_model="gpt-5.4-mini",
-        )
+        service = self._make_service(adapter)
 
         req = ChatCompletionsRequest(
             messages=[
@@ -229,12 +212,7 @@ class ChatServiceTests(unittest.TestCase):
 
     def test_chat_completions_function_tool_choice_is_normalized_for_responses_api(self) -> None:
         adapter = CapturingAdapter()
-        service = ChatService(
-            adapter,
-            DummyToolExecutor(),
-            DummyAuditLogger(),
-            default_model="gpt-5.4-mini",
-        )
+        service = self._make_service(adapter)
 
         req = ChatCompletionsRequest(
             messages=[ChatMessage(role="user", content="hello")],
@@ -257,6 +235,57 @@ class ChatServiceTests(unittest.TestCase):
             adapter.calls[0]["tool_choice"],
             {"type": "function", "name": "echo_tool"},
         )
+
+    def test_metadata_is_preserved_in_responses_mode(self) -> None:
+        adapter = CapturingAdapter()
+        service = self._make_service(adapter)
+        req = ChatCompletionsRequest(
+            messages=[ChatMessage(role="user", content="hello")],
+            metadata={"trace_id": "trace_123"},
+        )
+
+        service.run_nonstream(req)
+
+        self.assertEqual(adapter.calls[0]["metadata"], {"trace_id": "trace_123"})
+
+    def test_message_name_fails_instead_of_being_forwarded_or_dropped(self) -> None:
+        service = self._make_service()
+        req = ChatCompletionsRequest(
+            messages=[ChatMessage(role="user", content="hello", name="alice")],
+        )
+
+        with self.assertRaisesRegex(ValueError, "message.name"):
+            service.run_nonstream(req)
+
+    def test_legacy_assistant_function_call_fails_instead_of_being_dropped(self) -> None:
+        service = self._make_service()
+        req = ChatCompletionsRequest(
+            messages=[
+                ChatMessage(
+                    role="assistant",
+                    content=None,
+                    function_call={"name": "legacy_fn", "arguments": "{}"},
+                )
+            ],
+        )
+
+        with self.assertRaisesRegex(ValueError, "legacy assistant function_call"):
+            service.run_nonstream(req)
+
+    def test_assistant_audio_state_fails_instead_of_being_dropped(self) -> None:
+        service = self._make_service()
+        req = ChatCompletionsRequest(
+            messages=[
+                ChatMessage(
+                    role="assistant",
+                    content="hello",
+                    audio={"id": "audio_123"},
+                )
+            ],
+        )
+
+        with self.assertRaisesRegex(ValueError, "assistant audio state"):
+            service.run_nonstream(req)
 
 
 if __name__ == "__main__":
