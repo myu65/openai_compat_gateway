@@ -88,6 +88,25 @@ def _normalize_message_content(content: Any) -> Any:
     return str(content)
 
 
+def _normalize_message_content_with_refusal(message: dict[str, Any]) -> Any:
+    content = message.get("content")
+    refusal = message.get("refusal") if message.get("role") == "assistant" else None
+    if refusal is None:
+        return _normalize_message_content(content)
+
+    refusal_part = {"type": "refusal", "refusal": refusal}
+    if content in (None, "", []):
+        return _normalize_message_content([refusal_part])
+    if isinstance(content, list):
+        parts = list(content)
+        if not any(isinstance(part, dict) and part.get("type") == "refusal" for part in parts):
+            parts.append(refusal_part)
+        return _normalize_message_content(parts)
+    if isinstance(content, str):
+        return _normalize_message_content([{"type": "text", "text": content}, refusal_part])
+    return _normalize_message_content(content)
+
+
 def _normalize_tool_output(content: Any) -> Any:
     if content is None:
         return ""
@@ -111,7 +130,7 @@ def to_responses_input(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
             continue
 
         if role == "assistant" and tool_calls:
-            content = _normalize_message_content(m.get("content"))
+            content = _normalize_message_content_with_refusal(m)
             if content not in ("", [], None):
                 out.append({"role": "assistant", "content": content})
 
@@ -137,7 +156,7 @@ def to_responses_input(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
             )
             continue
 
-        out.append({"role": role, "content": _normalize_message_content(m.get("content"))})
+        out.append({"role": role, "content": _normalize_message_content_with_refusal(m)})
     return out
 
 
