@@ -56,15 +56,10 @@ def _to_responses_content_part(part: Any) -> dict[str, Any]:
         return target
 
     if part_type == "input_audio":
-        if part.get("prompt_cache_breakpoint") is not None:
-            raise ValueError(
-                "Responses translation cannot preserve prompt_cache_breakpoint on input_audio; "
-                "use x_openai.mode='chat_completions'"
-            )
-        input_audio = part.get("input_audio")
-        if not isinstance(input_audio, dict):
-            raise ValueError("Chat Completions input_audio content must contain an input_audio object")
-        return {"type": "input_audio", "input_audio": input_audio}
+        raise ValueError(
+            "Responses translation does not support Chat Completions input_audio message content; "
+            "use x_openai.mode='chat_completions'"
+        )
 
     # Allow callers using the gateway's permissive schema to provide native
     # Responses content parts directly. These are already in the target shape.
