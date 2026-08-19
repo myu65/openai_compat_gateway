@@ -41,6 +41,10 @@ class FunctionSpec(BaseModel):
 
 
 class ToolSpec(BaseModel):
+    # Keep wrapper-level additions visible so Responses mode can reject fields it
+    # cannot translate instead of Pydantic silently discarding them first.
+    model_config = ConfigDict(extra="allow")
+
     type: Literal["function"]
     function: FunctionSpec
 
