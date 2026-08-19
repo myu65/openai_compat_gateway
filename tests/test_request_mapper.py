@@ -87,7 +87,7 @@ class ToResponsesInputTests(unittest.TestCase):
                 {
                     "type": "function_call_output",
                     "call_id": "call_1",
-                    "output": '{"role":"admin"}'.replace(':', ': '),
+                    "output": '{"role": "admin"}',
                 },
             ],
         )
