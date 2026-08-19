@@ -78,6 +78,10 @@ class ChatService:
     def run_native_stream(self, req):
         return self.native_adapter.create_completion(self._native_payload(req), stream=True)
 
+    @staticmethod
+    def _unknown_non_null_keys(mapping: dict[str, Any], allowed: set[str]) -> list[str]:
+        return sorted(key for key, value in mapping.items() if key not in allowed and value is not None)
+
     def _validate_responses_compatibility(self, req) -> None:
         conflicts: list[str] = []
         if req.n != 1:
@@ -97,6 +101,16 @@ class ChatService:
         if request_extras:
             conflicts.append(f"unsupported Chat Completions parameters: {', '.join(request_extras)}")
 
+        if req.stream_options:
+            stream_option_extras = self._unknown_non_null_keys(
+                req.stream_options,
+                {"include_usage", "include_obfuscation"},
+            )
+            if stream_option_extras:
+                conflicts.append(f"unsupported stream_options fields: {', '.join(stream_option_extras)}")
+            if not req.stream:
+                conflicts.append("stream_options with stream=false")
+
         if req.x_builtin_tools:
             builtin_extras = sorted(
                 key for key, value in (req.x_builtin_tools.model_extra or {}).items() if value is not None
@@ -104,17 +118,24 @@ class ChatService:
             if builtin_extras:
                 conflicts.append(f"unsupported x_builtin_tools fields: {', '.join(builtin_extras)}")
 
+        tool_wrapper_extras: set[str] = set()
         function_tool_extras: set[str] = set()
         for tool in req.tools or []:
+            tool_wrapper_extras.update(key for key, value in (tool.model_extra or {}).items() if value is not None)
             function_tool_extras.update(
                 key for key, value in (tool.function.model_extra or {}).items() if value is not None
             )
+        if tool_wrapper_extras:
+            conflicts.append(f"unsupported tool wrapper fields: {', '.join(sorted(tool_wrapper_extras))}")
         if function_tool_extras:
             conflicts.append(f"unsupported function tool fields: {', '.join(sorted(function_tool_extras))}")
 
         allowed_message_extras = {"audio", "function_call", "refusal"}
         message_extras: set[str] = set()
+        tool_call_extras: set[str] = set()
+        tool_call_function_extras: set[str] = set()
         has_non_function_tool_call = False
+        malformed_tool_call = False
         for message in req.messages:
             message_extras.update(
                 key
@@ -122,12 +143,35 @@ class ChatService:
                 if value is not None and key not in allowed_message_extras
             )
             for tool_call in message.tool_calls or []:
+                if not isinstance(tool_call, dict):
+                    malformed_tool_call = True
+                    continue
+                tool_call_extras.update(
+                    self._unknown_non_null_keys(tool_call, {"id", "type", "function"})
+                )
                 if tool_call.get("type", "function") != "function":
                     has_non_function_tool_call = True
+                function = tool_call.get("function")
+                if function is None:
+                    continue
+                if not isinstance(function, dict):
+                    malformed_tool_call = True
+                    continue
+                tool_call_function_extras.update(
+                    self._unknown_non_null_keys(function, {"name", "arguments"})
+                )
         if message_extras:
             conflicts.append(f"unsupported Chat Completions message fields: {', '.join(sorted(message_extras))}")
+        if tool_call_extras:
+            conflicts.append(f"unsupported assistant tool_call fields: {', '.join(sorted(tool_call_extras))}")
+        if tool_call_function_extras:
+            conflicts.append(
+                f"unsupported assistant tool_call.function fields: {', '.join(sorted(tool_call_function_extras))}"
+            )
         if has_non_function_tool_call:
             conflicts.append("non-function assistant tool_calls")
+        if malformed_tool_call:
+            conflicts.append("malformed assistant tool_calls")
 
         if conflicts:
             joined = ", ".join(conflicts)
@@ -297,6 +341,14 @@ class ChatService:
 
         return model, input_payload, merged_tools, include, bridge_requests
 
+    def _responses_stream_options(self, req) -> dict[str, Any] | None:
+        if not req.stream_options:
+            return None
+        include_obfuscation = req.stream_options.get("include_obfuscation")
+        if include_obfuscation is None:
+            return None
+        return {"include_obfuscation": include_obfuscation}
+
     def _shared_responses_kwargs(self, req) -> dict[str, Any]:
         return {
             "temperature": req.temperature,
@@ -313,6 +365,7 @@ class ChatService:
             "prompt_cache_retention": req.prompt_cache_retention,
             "safety_identifier": req.safety_identifier,
             "user": req.user,
+            "stream_options": self._responses_stream_options(req),
         }
 
     def run_nonstream(self, req):
