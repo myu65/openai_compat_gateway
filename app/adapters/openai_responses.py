@@ -38,6 +38,7 @@ class OpenAIResponsesAdapter:
         text=None,
         parallel_tool_calls=None,
         service_tier=None,
+        metadata=None,
         stream: bool = False,
     ):
         kwargs = {
@@ -66,4 +67,6 @@ class OpenAIResponsesAdapter:
             kwargs["parallel_tool_calls"] = parallel_tool_calls
         if service_tier is not None:
             kwargs["service_tier"] = service_tier
+        if metadata is not None:
+            kwargs["metadata"] = metadata
         return self.client.responses.create(**kwargs)
