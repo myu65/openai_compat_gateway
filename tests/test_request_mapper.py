@@ -259,6 +259,27 @@ class ToResponsesInputTests(unittest.TestCase):
             ],
         )
 
+    def test_assistant_top_level_refusal_is_replayed_as_text(self) -> None:
+        items = to_responses_input(
+            [
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "refusal": "対応できません",
+                }
+            ]
+        )
+
+        self.assertEqual(
+            items,
+            [
+                {
+                    "role": "assistant",
+                    "content": [{"type": "input_text", "text": "対応できません"}],
+                }
+            ],
+        )
+
     def test_input_audio_fails_clearly_in_responses_translation(self) -> None:
         with self.assertRaisesRegex(ValueError, "does not support Chat Completions input_audio"):
             to_responses_input(
