@@ -38,12 +38,13 @@ class ChatServiceTests(unittest.TestCase):
             x_builtin_tools=builtin_tools,
         )
 
-    def _make_service(self, adapter=None) -> ChatService:
+    def _make_service(self, adapter=None, native_adapter=None) -> ChatService:
         return ChatService(
             adapter or CapturingAdapter(),
             DummyToolExecutor(),
             DummyAuditLogger(),
             default_model="gpt-5.4-mini",
+            native_adapter=native_adapter,
         )
 
     def test_no_tools_default_tool_choice_to_none(self) -> None:
@@ -235,6 +236,47 @@ class ChatServiceTests(unittest.TestCase):
             adapter.calls[0]["tool_choice"],
             {"type": "function", "name": "echo_tool"},
         )
+
+    def test_audio_input_stays_on_native_chat_when_auto_can_preserve_it(self) -> None:
+        service = self._make_service(native_adapter=SimpleNamespace())
+        req = ChatCompletionsRequest(
+            messages=[
+                ChatMessage(
+                    role="user",
+                    content=[
+                        {
+                            "type": "input_audio",
+                            "input_audio": {"data": "AAAA", "format": "wav"},
+                        }
+                    ],
+                )
+            ],
+            reasoning_effort="high",
+            tools=[ToolSpec(type="function", function=FunctionSpec(name="echo_tool"))],
+        )
+
+        self.assertEqual(service.select_mode(req), "chat_completions")
+
+    def test_audio_input_with_responses_only_features_fails_clearly(self) -> None:
+        service = self._make_service(native_adapter=SimpleNamespace())
+        req = ChatCompletionsRequest(
+            messages=[
+                ChatMessage(
+                    role="user",
+                    content=[
+                        {
+                            "type": "input_audio",
+                            "input_audio": {"data": "AAAA", "format": "wav"},
+                        }
+                    ],
+                )
+            ],
+            x_builtin_tools=BuiltinToolsConfig(web_search=True),
+        )
+
+        self.assertEqual(service.select_mode(req), "responses")
+        with self.assertRaisesRegex(ValueError, "does not support Chat Completions input_audio"):
+            service.run_nonstream(req)
 
     def test_metadata_is_preserved_in_responses_mode(self) -> None:
         adapter = CapturingAdapter()
