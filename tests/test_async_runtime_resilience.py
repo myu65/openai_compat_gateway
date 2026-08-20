@@ -4,6 +4,8 @@ import asyncio
 import json
 from types import SimpleNamespace
 
+import pytest
+
 from app.adapters.client import _limits
 from app.api.chat_completions import InflightLimiter, _guarded_async_sse, _inflight, _sse_headers
 from app.mappers.async_stream_mapper import map_async_stream_events
@@ -12,8 +14,9 @@ from app.services.async_chat_service import AsyncChatService
 
 
 class ClosingAsyncStream:
-    def __init__(self, events):
+    def __init__(self, events, *, delay_seconds: float = 0):
         self.events = list(events)
+        self.delay_seconds = delay_seconds
         self.closed = False
 
     def __aiter__(self):
@@ -21,6 +24,8 @@ class ClosingAsyncStream:
 
     async def _iterate(self):
         for event in self.events:
+            if self.delay_seconds:
+                await asyncio.sleep(self.delay_seconds)
             yield event
 
     async def close(self):
@@ -28,12 +33,15 @@ class ClosingAsyncStream:
 
 
 class AsyncCapturingAdapter:
-    def __init__(self, response):
+    def __init__(self, response, *, delay_seconds: float = 0):
         self.response = response
+        self.delay_seconds = delay_seconds
         self.calls = []
 
     async def create_response(self, **kwargs):
         self.calls.append(kwargs)
+        if self.delay_seconds:
+            await asyncio.sleep(self.delay_seconds)
         return self.response
 
 
@@ -127,5 +135,36 @@ def test_async_service_awaits_adapter_without_sync_threadpool() -> None:
         assert normalized.usage["total_tokens"] == 1
         assert adapter.calls[0]["stream"] is False
         assert audit.logged
+
+    asyncio.run(run())
+
+
+def test_stream_deadline_is_cumulative_across_creation_and_iteration() -> None:
+    async def run() -> None:
+        upstream = ClosingAsyncStream(
+            [SimpleNamespace(type="response.output_text.delta", delta="too late")],
+            delay_seconds=0.06,
+        )
+        adapter = AsyncCapturingAdapter(upstream, delay_seconds=0.06)
+        service = AsyncChatService(
+            adapter=adapter,
+            tool_executor=NullToolExecutor(),
+            audit_logger=DummyAuditLogger(),
+            default_model="test-model",
+            request_deadline_seconds=0.1,
+        )
+        req = ChatCompletionsRequest(
+            messages=[ChatMessage(role="user", content="hello")],
+            stream=True,
+            reasoning_effort="medium",
+            tools=[],
+            x_openai={"mode": "responses"},
+        )
+
+        stream = await service.run_stream_async(req)
+        with pytest.raises(TimeoutError):
+            async for _chunk in stream:
+                pass
+        assert upstream.closed is True
 
     asyncio.run(run())
