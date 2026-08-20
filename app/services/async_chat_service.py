@@ -54,9 +54,7 @@ class AsyncChatService(ChatService):
     def __init__(self, *args, request_deadline_seconds: float | None = None, **kwargs):
         super().__init__(*args, **kwargs)
         self.request_deadline_seconds = (
-            settings.openai_request_deadline_seconds
-            if request_deadline_seconds is None
-            else request_deadline_seconds
+            settings.openai_request_deadline_seconds if request_deadline_seconds is None else request_deadline_seconds
         )
 
     def _deadline_at(self) -> float:
