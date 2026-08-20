@@ -6,7 +6,8 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from app.api.chat_completions import close_service, router as chat_router, runtime_status
+from app.api.chat_completions import close_service, runtime_status
+from app.api.chat_completions import router as chat_router
 
 
 @asynccontextmanager
