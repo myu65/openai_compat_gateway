@@ -45,6 +45,13 @@ def _parse_env_int(name: str, default: int) -> int:
     return parsed
 
 
+def _parse_env_positive_int(name: str, default: int) -> int:
+    parsed = _parse_env_int(name, default)
+    if parsed <= 0:
+        raise ValueError(f"{name} must be greater than 0")
+    return parsed
+
+
 def _load_dotenv(dotenv_path: Path) -> None:
     if not dotenv_path.exists():
         return
@@ -78,7 +85,13 @@ class Settings:
     openai_read_timeout_seconds: float = _parse_env_float("OPENAI_READ_TIMEOUT_SECONDS", 900.0)
     openai_write_timeout_seconds: float = _parse_env_float("OPENAI_WRITE_TIMEOUT_SECONDS", 30.0)
     openai_pool_timeout_seconds: float = _parse_env_float("OPENAI_POOL_TIMEOUT_SECONDS", 10.0)
+    openai_request_deadline_seconds: float = _parse_env_float("OPENAI_REQUEST_DEADLINE_SECONDS", 1200.0)
+    openai_max_connections: int = _parse_env_positive_int("OPENAI_MAX_CONNECTIONS", 64)
+    # 0 deliberately disables upstream keep-alive reuse while openai-python #3440 is unresolved.
+    openai_max_keepalive_connections: int = _parse_env_int("OPENAI_MAX_KEEPALIVE_CONNECTIONS", 0)
     openai_max_retries: int = _parse_env_int("OPENAI_MAX_RETRIES", 0)
+    gateway_max_inflight_requests: int = _parse_env_positive_int("GATEWAY_MAX_INFLIGHT_REQUESTS", 64)
+    gateway_stream_connection_close: bool = _parse_env_bool("GATEWAY_STREAM_CONNECTION_CLOSE", default=True)
     gateway_api_key: str | None = os.getenv("GATEWAY_API_KEY")
 
 
