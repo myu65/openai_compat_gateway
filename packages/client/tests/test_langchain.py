@@ -61,6 +61,7 @@ def _llm(handler: Callable[[httpx.Request], httpx.Response], **kwargs: Any) -> C
 
 def test_supported_private_api_contract_is_unchanged() -> None:
     expected = {
+        "_use_responses_api": ["self", "payload"],
         "_get_request_payload": ["self", "input_", "stop", "kwargs"],
         "_create_chat_result": ["self", "response", "generation_info"],
         "_convert_chunk_to_generation_chunk": [
@@ -72,6 +73,21 @@ def test_supported_private_api_contract_is_unchanged() -> None:
     }
     for method_name, parameters in expected.items():
         assert list(inspect.signature(getattr(ChatOpenAI, method_name)).parameters) == parameters
+
+
+def test_invoke_never_bypasses_gateway_chat_completions_endpoint() -> None:
+    paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        return httpx.Response(200, json=_completion({"role": "assistant", "content": "result"}))
+
+    # ChatOpenAI normally auto-selects the Responses API for this output mode.
+    # ChatOpenAICompat must still target the gateway's compatibility endpoint;
+    # the gateway owns the upstream Chat-vs-Responses routing itself.
+    _llm(handler, output_version="responses/v1").invoke([HumanMessage(content="hello")])
+
+    assert paths == ["/v1/chat/completions"]
 
 
 def test_nonstream_state_is_saved_and_resent() -> None:
