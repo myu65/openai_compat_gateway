@@ -1,12 +1,23 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from app.api.chat_completions import router as chat_router
+from app.api.chat_completions import close_service, router as chat_router, runtime_status
 
-app = FastAPI(title="OpenAI Compat Gateway", version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    try:
+        yield
+    finally:
+        await close_service()
+
+
+app = FastAPI(title="OpenAI Compat Gateway", version="0.1.0", lifespan=lifespan)
 app.include_router(chat_router)
 
 
@@ -45,5 +56,5 @@ async def http_error_handler(_request: Request, exc: HTTPException):
 
 
 @app.get("/healthz")
-def healthz():
-    return {"ok": True}
+async def healthz():
+    return {"ok": True, **runtime_status()}
