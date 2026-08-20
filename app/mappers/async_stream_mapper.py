@@ -65,9 +65,7 @@ async def map_async_stream_events(
                         "object": "chat.completion.chunk",
                         "created": created,
                         "model": model,
-                        "choices": [
-                            {"index": 0, "delta": {"role": "assistant", "content": ""}, "finish_reason": None}
-                        ],
+                        "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}, "finish_reason": None}],
                     }
                 )
 
